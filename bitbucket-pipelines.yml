@@ -1,0 +1,16 @@
+image: ruby:2.4.0
+
+pipelines:
+  branches:
+    master:
+    - step:
+        caches:
+        - bundler
+        script:
+        - gem install bundle rubocop
+        - bundle install
+        - rubocop
+        - rake
+definitions:
+  caches:
+    bundler: vendor/bundle
