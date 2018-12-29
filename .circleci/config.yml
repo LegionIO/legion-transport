@@ -137,12 +137,6 @@ jobs:
       - store_artifacts:
           path: '*.gem'
 
-
-  "deploy-to-rubygems":
-    docker:
-      - image: circleci/ruby:2.4-node
-    steps:
-
 workflows:
   version: 2
   cop_rake_deploy:
