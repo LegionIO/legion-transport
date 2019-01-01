@@ -126,17 +126,6 @@ jobs:
       - store_test_results:
           path: test-results
 
-  "build-gem":
-    docker:
-      - image: circleci/ruby:2.4-node
-    steps:
-      - checkout
-      - run:
-          name: Build Gem
-          command: gem build legion-json.gemspec
-      - store_artifacts:
-          path: '*.gem'
-
 workflows:
   version: 2
   cop_rake_deploy:
@@ -176,14 +165,3 @@ workflows:
             - ruby-2.4
             - ruby-2.5
             - ruby-2.6
-      - build-gem:
-          requires:
-            - ruby-2.4
-            - ruby-2.2
-            - ruby-2.3
-            - ruby-2.5
-            - ruby-2.6
-            - jruby-9.2
-          filters:
-            branches:
-              only: /\bdevelop\b|\bmaster\b/
