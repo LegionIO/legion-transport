@@ -3,7 +3,7 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require 'legion/json/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = 'legion-json'
+  spec.name = (RUBY_ENGINE == 'jruby' ? 'legion-json-java' : 'legion-json')
   spec.version       = Legion::Json::VERSION
   spec.authors       = ['Esity']
   spec.email         = ['matthewdiverson@gmail.com']
