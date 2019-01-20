@@ -1,6 +1,19 @@
 begin
   require 'simplecov'
+
+  SimpleCov.profiles.define 'legion-json' do
+    add_filter '/spec/'
+    add_filter '/config/'
+    add_filter '/tmp/'
+
+    add_group 'Java', 'lib/legion/json/jrjackson'
+    add_group 'MRI', 'lib/legion/json/oj'
+    add_group 'Errors', 'lib/legion/parse_error'
+    add_group 'Core', 'lib/legion/json'
+  end
+
   SimpleCov.start
+  SimpleCov.use_merging(true)
   if ENV.key?('CODECOV_TOKEN')
     require 'codecov'
     SimpleCov.formatter = SimpleCov::Formatter::Codecov
