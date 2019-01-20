@@ -1,6 +1,8 @@
 require 'spec_helper'
 require 'legion/json'
 
+SimpleCov.command_name 'lib/legion/json'
+
 RSpec.describe Legion::Json do
   it 'has a version number' do
     expect(Legion::Json::VERSION).not_to be nil

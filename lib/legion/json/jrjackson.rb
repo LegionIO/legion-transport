@@ -1,5 +1,3 @@
-require 'jrjackson'
-
 module Legion
   module JSON
     # The Legion JSON parser when running on JRuby.
