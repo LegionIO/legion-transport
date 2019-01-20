@@ -1,6 +1,3 @@
-require 'oj'
-Oj.default_options = { mode: :compat }
-
 module Legion
   module JSON
     # The Legion JSON parser when running on MRI.

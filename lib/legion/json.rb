@@ -13,9 +13,12 @@ module Legion
       # @return [Object] parser.
       def setup!
         if RUBY_ENGINE == 'jruby'
+          require 'jrjackson'
           require 'legion/json/jrjackson'
           @parser = Legion::JSON::JrJackson.new
         else
+          require 'oj'
+          Oj.default_options = { mode: :compat }
           require 'legion/json/oj'
           @parser = Legion::JSON::Oj.new
         end
