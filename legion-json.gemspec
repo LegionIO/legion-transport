@@ -27,10 +27,11 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency 'rspec', '~> 3.0'
   spec.add_development_dependency 'rspec_junit_formatter', '~> 0'
   spec.add_development_dependency 'rubocop', '~> 0'
+  spec.add_development_dependency 'rubocop-performance'
   spec.add_dependency 'json', '~> 2.1'
   if RUBY_ENGINE == 'jruby'
     spec.add_dependency('jrjackson', '~> 0.4')
   else
-    spec.add_dependency('oj', '~> 2.18')
+    spec.add_dependency('oj', '~> 3')
   end
 end
