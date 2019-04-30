@@ -9,7 +9,7 @@ pipelines:
           script:
             - bash .circleci/setup-rubygems.sh
             - gem build legion-json.gemspec
-            - gem push "your-gem-name-$(git describe --tags).gem"
+            - gem push "legion-json-$(git describe --tags).gem"
   branches:
     master:
     - step:
