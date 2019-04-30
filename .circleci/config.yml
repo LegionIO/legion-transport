@@ -1,11 +1,13 @@
 version: 2 # use CircleCI 2.0
+orbs:
+  jira: circleci/jira@1.0.2
 jobs:
   "rubocop":
     docker:
       - image: circleci/ruby:2.4-node
     steps:
       - checkout
-      - run: gem install rubocop
+      - run: gem install rubocop rubocop-performance
       - run:
           name: Run Rubocop
           command: rubocop

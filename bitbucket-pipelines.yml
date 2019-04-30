@@ -1,6 +1,15 @@
 image: ruby:2.4.0
 
 pipelines:
+  tags:
+    '*':
+      - step:
+          name: Deploy to Rubygems
+          deployment: production
+          script:
+            - bash .circleci/setup-rubygems.sh
+            - gem build legion-json.gemspec
+            - gem push "your-gem-name-$(git describe --tags).gem"
   branches:
     master:
     - step:
