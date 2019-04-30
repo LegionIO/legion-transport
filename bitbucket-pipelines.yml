@@ -10,16 +10,6 @@ pipelines:
             - bash .circleci/setup-rubygems.sh
             - gem build legion-json.gemspec
             - gem push "your-gem-name-$(git describe --tags).gem"
-  branches:
-    master:
-    - step:
-        caches:
-        - bundler
-        script:
-        - gem install bundle rubocop
-        - bundle install
-        - rubocop
-        - rake
 definitions:
   caches:
     bundler: vendor/bundle
