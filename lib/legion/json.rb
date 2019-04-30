@@ -30,8 +30,8 @@ module Legion
       # @return [Object]
       def load(string)
         @parser.load(string)
-      rescue StandardError => error
-        raise Legion::JSON::ParseError.build(error, string)
+      rescue StandardError => e
+        raise Legion::JSON::ParseError.build(e, string)
       end
 
       # Dump (generate) a JSON string from a Ruby object.
