@@ -1,4 +1,6 @@
 version: 2 # use CircleCI 2.0
+orbs:
+  jira: circleci/jira@1.0.2
 jobs:
   "rubocop":
     docker:
