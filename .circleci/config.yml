@@ -28,6 +28,10 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
+      - run:
+          name: Upload to Codecov
+          command: bash <(curl -s https://codecov.io/bash)
+          when: always
   "ruby-two-one":
     docker:
       - image: circleci/ruby:2.1
@@ -42,6 +46,10 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
+      - run:
+          name: Upload to Codecov
+          command: bash <(curl -s https://codecov.io/bash)
+          when: always
   "ruby-two-two":
     docker:
       - image: circleci/ruby:2.2
@@ -56,7 +64,10 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
-
+      - run:
+          name: Upload to Codecov
+          command: bash <(curl -s https://codecov.io/bash)
+          when: always
   "ruby-two-three":
     docker:
       - image: circleci/ruby:2.3
@@ -71,7 +82,10 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
-
+      - run:
+          name: Upload to Codecov
+          command: bash <(curl -s https://codecov.io/bash)
+          when: always
   "ruby-two-four":
     docker:
       - image: circleci/ruby:2.4-node
@@ -86,6 +100,10 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
+      - run:
+          name: Upload to Codecov
+          command: bash <(curl -s https://codecov.io/bash)
+          when: always
   "ruby-two-five":
     docker:
       - image: circleci/ruby:2.5-node
@@ -100,6 +118,10 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
+      - run:
+          name: Upload to Codecov
+          command: bash <(curl -s https://codecov.io/bash)
+          when: always
   "ruby-two-six":
     docker:
       - image: circleci/ruby:2.6-node
@@ -114,6 +136,10 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
+      - run:
+          name: Upload to Codecov
+          command: bash <(curl -s https://codecov.io/bash)
+          when: always
   "jruby-nine-two":
     docker:
       - image: circleci/jruby:9.2
@@ -128,7 +154,10 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
-
+      - run:
+          name: Upload to Codecov
+          command: bash <(curl -s https://codecov.io/bash)
+          when: always
 workflows:
   version: 2
   cop_rake_deploy:
