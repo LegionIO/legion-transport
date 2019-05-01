@@ -134,37 +134,37 @@ workflows:
   cop_rake_deploy:
     jobs:
       - rubocop
-      - ruby-2.2:
+      - ruby-two-two:
           requires:
-            - ruby-2.4
+            - ruby-two-four
           filters:
             branches:
               only: /\bdevelop\b|\bmaster\b/
-      - ruby-2.3:
+      - ruby-two-three:
           requires:
-            - ruby-2.4
+            - ruby-two-four
           filters:
             branches:
               only: /\bdevelop\b|\bmaster\b/
-      - ruby-2.4:
+      - ruby-two-four:
           requires:
             - rubocop
-      - ruby-2.5:
+      - ruby-two-five:
           requires:
-            - ruby-2.4
+            - ruby-two-four
           filters:
             branches:
               only: /\bdevelop\b|\bmaster\b/
-      - ruby-2.6:
+      - ruby-two-six:
           requires:
-            - ruby-2.4
+            - ruby-two-four
           filters:
             branches:
               only: /\bdevelop\b|\bmaster\b/
-      - jruby-9.2:
+      - jruby-nine-two:
           requires:
-            - ruby-2.2
-            - ruby-2.3
-            - ruby-2.4
-            - ruby-2.5
-            - ruby-2.6
+            - ruby-two-two
+            - ruby-two-three
+            - ruby-two-four
+            - ruby-two-five
+            - ruby-two-six
