@@ -4,22 +4,21 @@ pipelines:
   tags:
     '*':
       - step:
-          name: Deploy to Rubygems
+          name: Deploy to Rubygems JRuby
+          image: jruby:9.2
+          deployment: staging
+          script:
+            - bash .circleci/setup-rubygems.sh
+            - gem build legion-json.gemspec
+            - gem push "legion-json-java-$(git describe --tags).gem"
+      - step:
+          name: Deploy to Rubygems MRI
+          image: ruby:2.4.0
           deployment: production
           script:
             - bash .circleci/setup-rubygems.sh
             - gem build legion-json.gemspec
             - gem push "legion-json-$(git describe --tags).gem"
-  branches:
-    master:
-    - step:
-        caches:
-        - bundler
-        script:
-        - gem install bundle rubocop
-        - bundle install
-        - rubocop
-        - rake
 definitions:
   caches:
     bundler: vendor/bundle

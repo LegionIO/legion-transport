@@ -1,5 +1,6 @@
-version: 2 # use CircleCI 2.0
+version: 2.1
 orbs:
+  codecov: codecov/codecov@1.0.4
   jira: circleci/jira@1.0.2
 jobs:
   "rubocop":
@@ -13,7 +14,7 @@ jobs:
           command: rubocop
       - store_test_results:
           path: test_results
-  "ruby-2.0":
+  "ruby-two-zero":
     docker:
       - image: circleci/ruby:2.0
     steps:
@@ -27,7 +28,7 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
-  "ruby-2.1":
+  "ruby-two-one":
     docker:
       - image: circleci/ruby:2.1
     steps:
@@ -41,7 +42,7 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
-  "ruby-2.2":
+  "ruby-two-two":
     docker:
       - image: circleci/ruby:2.2
     steps:
@@ -56,7 +57,7 @@ jobs:
       - store_test_results:
           path: test-results
 
-  "ruby-2.3":
+  "ruby-two-three":
     docker:
       - image: circleci/ruby:2.3
     steps:
@@ -71,7 +72,7 @@ jobs:
       - store_test_results:
           path: test-results
 
-  "ruby-2.4":
+  "ruby-two-four":
     docker:
       - image: circleci/ruby:2.4-node
     steps:
@@ -85,7 +86,7 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
-  "ruby-2.5":
+  "ruby-two-five":
     docker:
       - image: circleci/ruby:2.5-node
     steps:
@@ -99,7 +100,7 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
-  "ruby-2.6":
+  "ruby-two-six":
     docker:
       - image: circleci/ruby:2.6-node
     steps:
@@ -113,7 +114,7 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
-  "jruby-9.2":
+  "jruby-nine-two":
     docker:
       - image: circleci/jruby:9.2
     steps:
@@ -133,37 +134,37 @@ workflows:
   cop_rake_deploy:
     jobs:
       - rubocop
-      - ruby-2.2:
+      - ruby-two-two:
           requires:
-            - ruby-2.4
+            - ruby-two-four
           filters:
             branches:
               only: /\bdevelop\b|\bmaster\b/
-      - ruby-2.3:
+      - ruby-two-three:
           requires:
-            - ruby-2.4
+            - ruby-two-four
           filters:
             branches:
               only: /\bdevelop\b|\bmaster\b/
-      - ruby-2.4:
+      - ruby-two-four:
           requires:
             - rubocop
-      - ruby-2.5:
+      - ruby-two-five:
           requires:
-            - ruby-2.4
+            - ruby-two-four
           filters:
             branches:
               only: /\bdevelop\b|\bmaster\b/
-      - ruby-2.6:
+      - ruby-two-six:
           requires:
-            - ruby-2.4
+            - ruby-two-four
           filters:
             branches:
               only: /\bdevelop\b|\bmaster\b/
-      - jruby-9.2:
+      - jruby-nine-two:
           requires:
-            - ruby-2.2
-            - ruby-2.3
-            - ruby-2.4
-            - ruby-2.5
-            - ruby-2.6
+            - ruby-two-two
+            - ruby-two-three
+            - ruby-two-four
+            - ruby-two-five
+            - ruby-two-six
