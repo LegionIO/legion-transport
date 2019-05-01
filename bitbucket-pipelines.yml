@@ -9,8 +9,8 @@ pipelines:
           deployment: staging
           script:
             - bash .circleci/setup-rubygems.sh
-            - gem build legion-json.gemspec
-            - gem push "legion-json-java-$(git describe --tags).gem"
+            - jruby -S gem build legion-json.gemspec
+            - jruby -S gem push "legion-json-java-$(git describe --tags).gem"
       - step:
           name: Deploy to Rubygems MRI
           image: ruby:2.4.0
