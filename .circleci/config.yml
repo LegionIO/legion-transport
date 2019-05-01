@@ -1,7 +1,7 @@
 version: 2.1
 orbs:
-  jira: circleci/jira@1.0.2
   codecov: codecov/codecov@1.0.4
+  jira: circleci/jira@1.0.2
 jobs:
   "rubocop":
     docker:
