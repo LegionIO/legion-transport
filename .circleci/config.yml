@@ -14,63 +14,18 @@ jobs:
           command: rubocop
       - store_test_results:
           path: test_results
-  "ruby-two-zero":
+  "rake":
     docker:
-      - image: circleci/ruby:2.0
+      - image: circleci/ruby:2.4-node
     steps:
       - checkout
+      - run: gem install bundler
+      - run: bundle install
       - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
+          name: Run Rake
+          command: rake
       - store_test_results:
-          path: test-results
-  "ruby-two-one":
-    docker:
-      - image: circleci/ruby:2.1
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-  "ruby-two-two":
-    docker:
-      - image: circleci/ruby:2.2
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-
-  "ruby-two-three":
-    docker:
-      - image: circleci/ruby:2.3
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
+          path: test_results
 
   "ruby-two-four":
     docker:
@@ -134,21 +89,12 @@ workflows:
   cop_rake_deploy:
     jobs:
       - rubocop
-      - ruby-two-two:
-          requires:
-            - ruby-two-four
-          filters:
-            branches:
-              only: /\bdevelop\b|\bmaster\b/
-      - ruby-two-three:
-          requires:
-            - ruby-two-four
-          filters:
-            branches:
-              only: /\bdevelop\b|\bmaster\b/
-      - ruby-two-four:
+      - rake:
           requires:
             - rubocop
+      - ruby-two-four:
+          requires:
+            - rake
       - ruby-two-five:
           requires:
             - ruby-two-four
@@ -163,8 +109,6 @@ workflows:
               only: /\bdevelop\b|\bmaster\b/
       - jruby-nine-two:
           requires:
-            - ruby-two-two
-            - ruby-two-three
             - ruby-two-four
             - ruby-two-five
             - ruby-two-six
