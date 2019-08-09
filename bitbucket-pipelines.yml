@@ -9,6 +9,8 @@ pipelines:
           deployment: staging
           script:
             - bash .circleci/setup-rubygems.sh
+            - jruby -S gem install bundler bundle git
+            - jruby -S bundle update
             - jruby -S gem build legion-json.gemspec
             - jruby -S gem push "legion-json-java-$(git describe --tags).gem"
       - step:
