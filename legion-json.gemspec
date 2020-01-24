@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
   spec.description   = 'A gem used to load and use JSON objects inside the Legion framework'
   spec.homepage      = 'https://bitbucket.org/legion-io/legion-json'
   spec.license       = 'MIT'
-  spec.required_ruby_version = '~> 2.2'
+  spec.required_ruby_version = '~> 2.4'
 
   spec.files = `git ls-files -z`.split("\x0").reject do |f|
     f.match(%r{^(test|spec|features)/})
