@@ -1,199 +1,61 @@
 version: 2.1
 orbs:
-  codecov: codecov/codecov@1.0.4
-  jira: circleci/jira@1.0.2
+  ruby: circleci/ruby@0.2.1
+
 jobs:
   "rubocop":
-    docker:
-      - image: circleci/ruby:2.4-node
-    steps:
-      - checkout
-      - run: gem install rubocop rubocop-performance
-      - run:
-          name: Run Rubocop
-          command: rubocop
-      - store_test_results:
-          path: test_results
-  "ruby-two-zero":
-    docker:
-      - image: circleci/ruby:2.0
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - run:
-          name: Upload to Codecov
-          command: bash <(curl -s https://codecov.io/bash)
-          when: always
-  "ruby-two-one":
-    docker:
-      - image: circleci/ruby:2.1
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - run:
-          name: Upload to Codecov
-          command: bash <(curl -s https://codecov.io/bash)
-          when: always
-  "ruby-two-two":
-    docker:
-      - image: circleci/ruby:2.2
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - run:
-          name: Upload to Codecov
-          command: bash <(curl -s https://codecov.io/bash)
-          when: always
-  "ruby-two-three":
-    docker:
-      - image: circleci/ruby:2.3
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - run:
-          name: Upload to Codecov
-          command: bash <(curl -s https://codecov.io/bash)
-          when: always
-  "ruby-two-four":
-    docker:
-      - image: circleci/ruby:2.4-node
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - run:
-          name: Upload to Codecov
-          command: bash <(curl -s https://codecov.io/bash)
-          when: always
-  "ruby-two-five":
     docker:
       - image: circleci/ruby:2.5-node
     steps:
       - checkout
+      - ruby/load-cache
+      - ruby/install-deps
       - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - run:
-          name: Upload to Codecov
-          command: bash <(curl -s https://codecov.io/bash)
-          when: always
+          name: Run Rubocop
+          command: bundle exec rubocop
+      - ruby/save-cache
+  "ruby-two-five":
+    docker:
+      - image: circleci/ruby:2.5
+      - image: memcached:1.5-alpine
+    steps:
+      - checkout
+      - ruby/load-cache
+      - ruby/install-deps
+      - ruby/run-tests
+      - ruby/save-cache
   "ruby-two-six":
     docker:
-      - image: circleci/ruby:2.6-node
+      - image: circleci/ruby:2.6
+      - image: memcached:1.5-alpine
     steps:
       - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - run:
-          name: Upload to Codecov
-          command: bash <(curl -s https://codecov.io/bash)
-          when: always
-  "jruby-nine-two":
+      - ruby/load-cache
+      - ruby/install-deps
+      - ruby/run-tests
+      - ruby/save-cache
+  "ruby-two-seven":
     docker:
-      - image: circleci/jruby:9.2
+      - image: circleci/ruby:2.7
+      - image: memcached:1.5-alpine
     steps:
       - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - run:
-          name: Upload to Codecov
-          command: bash <(curl -s https://codecov.io/bash)
-          when: always
+      - ruby/load-cache
+      - ruby/install-deps
+      - ruby/run-tests
+      - ruby/save-cache
+
 workflows:
   version: 2
-  cop_rake_deploy:
+  rubocop-rspec:
     jobs:
       - rubocop
-      - ruby-two-two:
-          requires:
-            - ruby-two-four
-          filters:
-            branches:
-              only: /\bdevelop\b|\bmaster\b/
-      - ruby-two-three:
-          requires:
-            - ruby-two-four
-          filters:
-            branches:
-              only: /\bdevelop\b|\bmaster\b/
-      - ruby-two-four:
-          requires:
-            - rubocop
       - ruby-two-five:
           requires:
-            - ruby-two-four
-          filters:
-            branches:
-              only: /\bdevelop\b|\bmaster\b/
+            - rubocop
       - ruby-two-six:
           requires:
-            - ruby-two-four
-          filters:
-            branches:
-              only: /\bdevelop\b|\bmaster\b/
-      - jruby-nine-two:
-          requires:
-            - ruby-two-two
-            - ruby-two-three
-            - ruby-two-four
             - ruby-two-five
-            - ruby-two-six
+      - ruby-two-seven:
+          requires:
+            - ruby-two-five
