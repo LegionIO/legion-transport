@@ -17,7 +17,7 @@ Layout/HashAlignment:
 Style/Documentation:
   Enabled: false
 AllCops:
-  TargetRubyVersion: 2.4
+  TargetRubyVersion: 2.5
 Style/FrozenStringLiteralComment:
   Enabled: false
 Naming/FileName:
