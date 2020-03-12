@@ -2,7 +2,7 @@ image: ruby:2.4.0
 
 pipelines:
   tags:
-    '*':
+    '0.1.1':
       - step:
           name: Deploy to Rubygems MRI
           image: ruby:2.5.0
