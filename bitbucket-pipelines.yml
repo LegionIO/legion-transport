@@ -4,17 +4,6 @@ pipelines:
   tags:
     '*':
       - step:
-          name: Deploy to Rubygems JRuby
-          image: jruby:9.2
-          trigger: manual
-          deployment: staging
-          script:
-            - bash .circleci/setup-rubygems.sh
-            - jruby -S gem install bundler bundle git
-            - jruby -S bundle update
-            - jruby -S gem build legion-json.gemspec
-            - jruby -S gem push "legion-json-java-$(git describe --tags).gem"
-      - step:
           name: Deploy to Rubygems MRI
           image: ruby:2.5.0
           deployment: production
