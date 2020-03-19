@@ -45,13 +45,19 @@ jobs:
       - ruby/install-deps
       - ruby/run-tests
       - ruby/save-cache
+  "sonarcloud":
+    docker:
+      - image: circleci/ruby:2.7
+    steps:
+      - checkout
+      - ruby/load-cache
+      - ruby/install-deps
+      - sonarcloud/scan
 
 workflows:
   version: 2
   rubocop-rspec:
     jobs:
-      - build:
-          context: SonarCloud
       - rubocop
       - ruby-two-five:
           requires:
@@ -62,3 +68,7 @@ workflows:
       - ruby-two-seven:
           requires:
             - ruby-two-five
+      - sonarcloud:
+          required:
+            - ruby-two-seven
+            - ruby-two-six
