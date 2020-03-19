@@ -4,21 +4,23 @@ require 'legion/json'
 SimpleCov.command_name 'lib/legion/json'
 
 RSpec.describe Legion::Json do
+  before(:all) { @json_string = '{"foo":"bar"}' }
+
   it 'has a version number' do
     expect(Legion::Json::VERSION).not_to be nil
   end
 
   it 'can load a parser for current platform' do
-    hash = Legion::JSON.load('{"foo":"bar"}')
+    hash = Legion::JSON.load(@json_string)
     expect(hash).to eq(foo: 'bar')
     string = Legion::JSON.dump(baz: 'qux')
     expect(string).to eq('{"baz":"qux"}')
   end
 
   it 'can load json correctly' do
-    hash = Legion::JSON.load('{"foo":"bar"}')
+    hash = Legion::JSON.load(@json_string)
     string = Legion::JSON.dump(hash)
-    expect(string).to eq('{"foo":"bar"}')
+    expect(string).to eq(@json_string)
   end
 
   it 'can handle large json objects' do
@@ -40,7 +42,7 @@ RSpec.describe Legion::Json do
   end
 
   it 'will not sq' do
-    hash = Legion::JSON.load('{"foo":"bar"}')
+    hash = Legion::JSON.load(@json_string)
     expect(hash).not_to eq(foo: 'baz')
     expect(hash).not_to eq(bar: 'foo')
   end
