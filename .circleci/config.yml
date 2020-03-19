@@ -52,7 +52,9 @@ jobs:
       - checkout
       - ruby/load-cache
       - ruby/install-deps
+      - ruby/run-tests
       - sonarcloud/scan
+      - ruby/save-cache
 
 workflows:
   version: 2
