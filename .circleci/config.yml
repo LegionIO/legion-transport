@@ -1,6 +1,7 @@
 version: 2.1
 orbs:
   ruby: circleci/ruby@0.2.1
+  sonarcloud: sonarsource/sonarcloud@1.0.1
 
 jobs:
   "rubocop":
@@ -49,6 +50,8 @@ workflows:
   version: 2
   rubocop-rspec:
     jobs:
+      - build:
+          context: SonarCloud
       - rubocop
       - ruby-two-five:
           requires:
