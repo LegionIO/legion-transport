@@ -8,6 +8,8 @@
 /tmp/
 /rspec/
 /test-results/
+/.scannerwork
+rubocop-result.json
 *.gem
 *.pem
 
