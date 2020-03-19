@@ -22,7 +22,9 @@ jobs:
     steps:
       - checkout
       - ruby/load-cache
-      - bundle update --bundler
+      - run:
+          name: unpdate bundler
+          command: bundle update --bundler
       - ruby/install-deps
       - ruby/run-tests
       - ruby/save-cache
