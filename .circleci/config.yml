@@ -23,8 +23,8 @@ jobs:
       - checkout
       - ruby/load-cache
       - run:
-          name: unpdate bundler
-          command: bundle update --bundler
+          name: update bundler
+          command: gem update bundler
       - ruby/install-deps
       - ruby/run-tests
       - ruby/save-cache
