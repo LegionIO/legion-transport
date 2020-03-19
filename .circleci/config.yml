@@ -69,6 +69,6 @@ workflows:
           requires:
             - ruby-two-five
       - sonarcloud:
-          required:
+          requires:
             - ruby-two-seven
             - ruby-two-six
