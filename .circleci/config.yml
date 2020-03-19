@@ -6,7 +6,7 @@ orbs:
 jobs:
   "rubocop":
     docker:
-      - image: circleci/ruby:2.5-node
+      - image: circleci/ruby:2.7-node
     steps:
       - checkout
       - ruby/load-cache
