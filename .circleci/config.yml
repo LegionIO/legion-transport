@@ -53,6 +53,9 @@ jobs:
       - ruby/load-cache
       - ruby/install-deps
       - ruby/run-tests
+      - run:
+          name: Run Rubocop
+          command: bundle exec rubocop --format=json --out=rubocop-result.json
       - sonarcloud/scan
       - ruby/save-cache
 

@@ -12,7 +12,9 @@ begin
     add_group 'Core', 'lib/legion/json'
   end
 
-  SimpleCov.start
+  SimpleCov.start do
+    formatter SimpleCov::Formatter::SimpleFormatter
+  end
   SimpleCov.use_merging(true)
   if ENV.key?('CODECOV_TOKEN')
     require 'codecov'
