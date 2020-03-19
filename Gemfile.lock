@@ -62,7 +62,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
-  bundler (>= 2.0)
+  bundler
   codecov (~> 0)
   legion-json!
   rake
