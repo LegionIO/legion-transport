@@ -18,6 +18,7 @@ Style/Documentation:
   Enabled: false
 AllCops:
   TargetRubyVersion: 2.5
+  NewCops: enable
 Style/FrozenStringLiteralComment:
   Enabled: false
 Naming/FileName:

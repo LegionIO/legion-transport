@@ -18,7 +18,6 @@ jobs:
   "ruby-two-five":
     docker:
       - image: circleci/ruby:2.5
-      - image: memcached:1.5-alpine
     steps:
       - checkout
       - ruby/load-cache
@@ -31,7 +30,6 @@ jobs:
   "ruby-two-six":
     docker:
       - image: circleci/ruby:2.6
-      - image: memcached:1.5-alpine
     steps:
       - checkout
       - ruby/load-cache
@@ -44,13 +42,41 @@ jobs:
   "ruby-two-seven":
     docker:
       - image: circleci/ruby:2.7
-      - image: memcached:1.5-alpine
     steps:
       - checkout
       - ruby/load-cache
       - ruby/install-deps
       - ruby/run-tests
       - ruby/save-cache
+  "jruby-nine-two":
+    docker:
+      - image: circleci/jruby:9.2-jre
+    steps:
+      - checkout
+      - run:
+          name: Bundle Install
+          command: bundle install
+      - run:
+          name: Run RSpec
+          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
+          when: always
+      - store_test_results:
+          path: test-results
+      - sonarcloud/scan
+  "jruby-nine-two-e":
+    docker:
+      - image: circleci/jruby:9.2.11-jre
+    steps:
+      - checkout
+      - run:
+          name: Bundle Install
+          command: bundle install
+      - run:
+          name: Run RSpec
+          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
+          when: always
+      - store_test_results:
+          path: test-results
   "sonarcloud":
     docker:
       - image: circleci/ruby:2.7
@@ -83,3 +109,10 @@ workflows:
           requires:
             - ruby-two-seven
             - ruby-two-six
+      - jruby-nine-two:
+          requires:
+            - ruby-two-seven
+            - ruby-two-six
+      - jruby-nine-two-e:
+          requires:
+            - jruby-nine-two
