@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
   spec.description   = 'A gem used to load and use JSON objects inside the Legion framework'
   spec.homepage      = 'https://bitbucket.org/legion-io/legion-json'
   spec.license       = 'MIT'
-  spec.required_ruby_version = '~> 2.5'
+  spec.required_ruby_version = '>= 2.5'
   spec.metadata = {
     'bug_tracker_uri'   => 'https://legionio.atlassian.net/projects/JSON/issues',
     'changelog_uri'     => 'https://legionio.atlassian.net/wiki/spaces/LEGION/pages/24674324/JSON',
