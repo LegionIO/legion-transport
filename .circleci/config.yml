@@ -1,7 +1,7 @@
 version: 2.1
 orbs:
   ruby: circleci/ruby@0.2.1
-  sonarcloud: sonarsource/sonarcloud@1.0.1
+  sonarcloud: sonarsource/sonarcloud@1.0.2
 
 jobs:
   "rubocop":
@@ -48,9 +48,9 @@ jobs:
       - ruby/install-deps
       - ruby/run-tests
       - ruby/save-cache
-  "jruby-nine-two":
+  "jruby92-8jdk":
     docker:
-      - image: circleci/jruby:9.2-jre
+      - image: circleci/jruby:9.2-jdk8
     steps:
       - checkout
       - run:
@@ -63,9 +63,9 @@ jobs:
       - store_test_results:
           path: test-results
       - sonarcloud/scan
-  "jruby-nine-two-e":
+  "jruby92-11jdk":
     docker:
-      - image: circleci/jruby:9.2.11-jre
+      - image: circleci/jruby:9.2-jre11
     steps:
       - checkout
       - run:
@@ -77,6 +77,22 @@ jobs:
           when: always
       - store_test_results:
           path: test-results
+      - sonarcloud/scan
+  "jruby92-14jdk":
+    docker:
+      - image: circleci/jruby:9.2-jdk14
+    steps:
+      - checkout
+      - run:
+          name: Bundle Install
+          command: bundle install
+      - run:
+          name: Run RSpec
+          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
+          when: always
+      - store_test_results:
+          path: test-results
+      - sonarcloud/scan
   "sonarcloud":
     docker:
       - image: circleci/ruby:2.7
@@ -107,12 +123,14 @@ workflows:
             - ruby-two-five
       - sonarcloud:
           requires:
-            - ruby-two-seven
-            - ruby-two-six
-      - jruby-nine-two:
+            - ruby-two-five
+      - jruby92-8jdk:
           requires:
             - ruby-two-seven
             - ruby-two-six
-      - jruby-nine-two-e:
+      - jruby92-11jdk:
           requires:
-            - jruby-nine-two
+            - jruby92-8jdk
+      - jruby92-14jdk:
+          requires:
+            - jruby92-8jdk
