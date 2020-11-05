@@ -6,7 +6,7 @@ orbs:
 jobs:
   "rubocop":
     docker:
-      - image: circleci/ruby:2.7
+      - image: cimg/ruby:2.7
     steps:
       - checkout
       - ruby/install-deps
@@ -15,7 +15,7 @@ jobs:
           command: bundle exec rubocop
   "ruby-two-five":
     docker:
-      - image: circleci/ruby:2.5
+      - image: cimg/ruby:2.5
     steps:
       - checkout
       - run:
@@ -25,7 +25,7 @@ jobs:
       - ruby/rspec-test
   "ruby-two-six":
     docker:
-      - image: circleci/ruby:2.6
+      - image: cimg/ruby:2.6
     steps:
       - checkout
       - run:
@@ -87,7 +87,7 @@ jobs:
       - sonarcloud/scan
   "sonarcloud":
     docker:
-      - image: circleci/ruby:2.7
+      - image: cimg/ruby:2.7
     steps:
       - checkout
       - ruby/install-deps
