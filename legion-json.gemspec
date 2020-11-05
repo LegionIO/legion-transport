@@ -28,8 +28,8 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   spec.add_development_dependency 'bundler', '>= 2'
-  spec.add_development_dependency 'jrjackson' if RUBY_ENGINE == 'jruby'
-  spec.add_development_dependency 'oj' unless RUBY_ENGINE == 'jruby'
+  # spec.add_development_dependency 'jrjackson' if RUBY_ENGINE == 'jruby'
+  # spec.add_development_dependency 'oj' unless RUBY_ENGINE == 'jruby'
   spec.add_development_dependency 'rake'
   spec.add_development_dependency 'rspec'
   spec.add_development_dependency 'rspec_junit_formatter'
