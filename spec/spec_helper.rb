@@ -16,11 +16,7 @@ begin
     formatter SimpleCov::Formatter::SimpleFormatter if ENV.key? 'SONAR_TOKEN'
   end
   SimpleCov.use_merging(true)
-  SimpleCov.minimum_coverage 90
-  if ENV.key?('CODECOV_TOKEN')
-    require 'codecov'
-    SimpleCov.formatter = SimpleCov::Formatter::Codecov
-  end
+  SimpleCov.minimum_coverage 95
 rescue LoadError
   puts 'Failed to load file for coverage reports, continuing without it'
 end
