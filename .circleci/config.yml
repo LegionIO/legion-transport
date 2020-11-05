@@ -1,12 +1,12 @@
 version: 2.1
 orbs:
-  ruby: circleci/ruby@0.2.1
+  ruby: circleci/ruby@1.1.2
   sonarcloud: sonarsource/sonarcloud@1.0.2
 
 jobs:
   "rubocop":
     docker:
-      - image: circleci/ruby:2.7-node
+      - image: circleci/ruby:2.7
     steps:
       - checkout
       - ruby/load-cache
