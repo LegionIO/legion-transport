@@ -1,15 +1,18 @@
-image: ruby:2.7.0
+image: ruby:2.7
 
 pipelines:
   tags:
-    'v0.1.1':
+    "v*":
       - step:
-          name: Deploy to Rubygems MRI
-          deployment: production
+          name: Push to RubyGems
+          deployment: RubyGems
           script:
-            - bash .circleci/setup-rubygems.sh
-            - gem build legion-json.gemspec
-            - gem push "legion-json-$(git describe --tags).gem"
+            - gem install bundler gem-release rspec
+            - bundle install
+            - (umask  077 ; echo $gem_creds | base64 --decode > ~/.gem/credentials)
+            - gem release
+          artifacts:
+            - pkg/**
 definitions:
   caches:
-    bundler: vendor/bundle
+    bundler: /usr/local/bundle
