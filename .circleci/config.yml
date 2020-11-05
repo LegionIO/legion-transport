@@ -9,7 +9,6 @@ jobs:
       - image: circleci/ruby:2.7
     steps:
       - checkout
-      - ruby/load-cache
       - ruby/install-deps
       - run:
           name: Run Rubocop
@@ -20,7 +19,6 @@ jobs:
       - image: circleci/ruby:2.5
     steps:
       - checkout
-      - ruby/load-cache
       - run:
           name: update bundler
           command: gem update bundler
@@ -32,7 +30,6 @@ jobs:
       - image: circleci/ruby:2.6
     steps:
       - checkout
-      - ruby/load-cache
       - run:
           name: update bundler
           command: gem update bundler
@@ -44,7 +41,6 @@ jobs:
       - image: circleci/ruby:2.7
     steps:
       - checkout
-      - ruby/load-cache
       - ruby/install-deps
       - ruby/run-tests
       - ruby/save-cache
@@ -98,7 +94,6 @@ jobs:
       - image: circleci/ruby:2.7
     steps:
       - checkout
-      - ruby/load-cache
       - ruby/install-deps
       - ruby/run-tests
       - run:
