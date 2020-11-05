@@ -13,9 +13,10 @@ begin
   end
 
   SimpleCov.start do
-    formatter SimpleCov::Formatter::SimpleFormatter
+    formatter SimpleCov::Formatter::SimpleFormatter if ENV.key? 'SONAR_TOKEN'
   end
   SimpleCov.use_merging(true)
+  SimpleCov.minimum_coverage 90
   if ENV.key?('CODECOV_TOKEN')
     require 'codecov'
     SimpleCov.formatter = SimpleCov::Formatter::Codecov

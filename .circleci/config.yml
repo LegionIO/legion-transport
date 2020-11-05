@@ -11,6 +11,10 @@ jobs:
       - checkout
       - ruby/install-deps
       - run:
+          name: Run Rubocop to sonarcloud
+          command: bundle exec rubocop --format=json --out=rubocop-result.json
+      - sonarcloud/scan
+      - run:
           name: Run Rubocop
           command: bundle exec rubocop
   "ruby-two-five":
@@ -23,16 +27,15 @@ jobs:
           command: gem update bundler
       - ruby/install-deps
       - ruby/rspec-test
+      - sonarcloud/scan
   "ruby-two-six":
     docker:
       - image: cimg/ruby:2.6
     steps:
       - checkout
-      - run:
-          name: update bundler
-          command: gem update bundler
       - ruby/install-deps
       - ruby/rspec-test
+      - sonarcloud/scan
   "ruby-two-seven":
     docker:
       - image: circleci/ruby:2.7
@@ -40,61 +43,30 @@ jobs:
       - checkout
       - ruby/install-deps
       - ruby/rspec-test
+      - sonarcloud/scan
   "jruby92-8jdk":
     docker:
       - image: circleci/jruby:9.2-jdk8
     steps:
       - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
+      - ruby/install-deps
+      - ruby/rspec-test
       - sonarcloud/scan
   "jruby92-11jdk":
     docker:
       - image: circleci/jruby:9.2-jre11
     steps:
       - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
+      - ruby/install-deps
+      - ruby/rspec-test
       - sonarcloud/scan
   "jruby92-14jdk":
     docker:
       - image: circleci/jruby:9.2-jdk14
     steps:
       - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
-      - store_test_results:
-          path: test-results
-      - sonarcloud/scan
-  "sonarcloud":
-    docker:
-      - image: cimg/ruby:2.7
-    steps:
-      - checkout
       - ruby/install-deps
       - ruby/rspec-test
-      - run:
-          name: Run Rubocop
-          command: bundle exec rubocop --format=json --out=rubocop-result.json
       - sonarcloud/scan
 
 workflows:
@@ -109,9 +81,6 @@ workflows:
           requires:
             - ruby-two-five
       - ruby-two-seven:
-          requires:
-            - ruby-two-five
-      - sonarcloud:
           requires:
             - ruby-two-five
       - jruby92-8jdk:
