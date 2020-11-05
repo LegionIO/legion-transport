@@ -22,7 +22,7 @@ jobs:
           name: update bundler
           command: gem update bundler
       - ruby/install-deps
-      - ruby/run-tests
+      - ruby/rspec-test
   "ruby-two-six":
     docker:
       - image: circleci/ruby:2.6
@@ -32,14 +32,14 @@ jobs:
           name: update bundler
           command: gem update bundler
       - ruby/install-deps
-      - ruby/run-tests
+      - ruby/rspec-test
   "ruby-two-seven":
     docker:
       - image: circleci/ruby:2.7
     steps:
       - checkout
       - ruby/install-deps
-      - ruby/run-tests
+      - ruby/rspec-test
   "jruby92-8jdk":
     docker:
       - image: circleci/jruby:9.2-jdk8
@@ -91,7 +91,7 @@ jobs:
     steps:
       - checkout
       - ruby/install-deps
-      - ruby/run-tests
+      - ruby/rspec-test
       - run:
           name: Run Rubocop
           command: bundle exec rubocop --format=json --out=rubocop-result.json
