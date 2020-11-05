@@ -9,64 +9,99 @@ jobs:
       - image: cimg/ruby:2.7
     steps:
       - checkout
-      - ruby/install-deps
-      - run:
-          name: Run Rubocop to sonarcloud
-          command: bundle exec rubocop --format=json --out=rubocop-result.json
+      - restore_cache:
+          key: "bundler cache"
+      - run: bundle update
+      - run: bundle exec rubocop --format=json --out=rubocop-result.json
       - sonarcloud/scan
-      - run:
-          name: Run Rubocop
-          command: bundle exec rubocop
+      - run: bundle exec rubocop
+      - save_cache:
+          key: "bundler cache"
+          paths:
+            - "/usr/local/bundle"
   "ruby-two-five":
     docker:
       - image: cimg/ruby:2.5
     steps:
       - checkout
-      - run:
-          name: update bundler
-          command: gem update bundler
-      - ruby/install-deps
-      - ruby/rspec-test
+      - restore_cache:
+          key: "bundler cache"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec
       - sonarcloud/scan
   "ruby-two-six":
     docker:
       - image: cimg/ruby:2.6
     steps:
       - checkout
-      - ruby/install-deps
-      - ruby/rspec-test
+      - restore_cache:
+          key: "bundler cache"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec
       - sonarcloud/scan
   "ruby-two-seven":
     docker:
       - image: circleci/ruby:2.7
     steps:
       - checkout
-      - ruby/install-deps
-      - ruby/rspec-test
+      - restore_cache:
+          key: "bundler cache"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec
       - sonarcloud/scan
   "jruby92-8jdk":
     docker:
       - image: circleci/jruby:9.2-jdk8
     steps:
       - checkout
-      - ruby/install-deps
-      - ruby/rspec-test
+      - restore_cache:
+          key: "bundler cache"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec
       - sonarcloud/scan
   "jruby92-11jdk":
     docker:
       - image: circleci/jruby:9.2-jre11
     steps:
       - checkout
-      - ruby/install-deps
-      - ruby/rspec-test
+      - restore_cache:
+          key: "bundler cache"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec
       - sonarcloud/scan
   "jruby92-14jdk":
     docker:
       - image: circleci/jruby:9.2-jdk14
     steps:
       - checkout
-      - ruby/install-deps
-      - ruby/rspec-test
+      - restore_cache:
+          key: "bundler cache"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec
       - sonarcloud/scan
 
 workflows:
