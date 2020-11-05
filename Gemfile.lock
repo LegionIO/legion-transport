@@ -60,6 +60,7 @@ GEM
       json (>= 1.8, < 3)
       simplecov-html (~> 0.10.0)
     simplecov-html (0.10.2)
+    simplecov_json_formatter (0.1.2)
     unicode-display_width (1.7.0)
 
 PLATFORMS
@@ -76,6 +77,7 @@ DEPENDENCIES
   rubocop
   rubocop-performance
   simplecov (< 0.18.0)
+  simplecov_json_formatter
 
 BUNDLED WITH
    2.1.4
