@@ -14,7 +14,6 @@ GEM
     json (2.3.1)
     json_pure (2.3.1)
     multi_json (1.15.0)
-    oj (3.10.15)
     parallel (1.19.2)
     parser (2.7.2.0)
       ast (~> 2.4.1)
@@ -66,7 +65,6 @@ PLATFORMS
 DEPENDENCIES
   bundler (>= 2)
   legion-json!
-  oj
   rake
   rspec
   rspec_junit_formatter
