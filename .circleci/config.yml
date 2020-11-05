@@ -13,7 +13,6 @@ jobs:
       - run:
           name: Run Rubocop
           command: bundle exec rubocop
-      - ruby/save-cache
   "ruby-two-five":
     docker:
       - image: circleci/ruby:2.5
@@ -24,7 +23,6 @@ jobs:
           command: gem update bundler
       - ruby/install-deps
       - ruby/run-tests
-      - ruby/save-cache
   "ruby-two-six":
     docker:
       - image: circleci/ruby:2.6
@@ -35,7 +33,6 @@ jobs:
           command: gem update bundler
       - ruby/install-deps
       - ruby/run-tests
-      - ruby/save-cache
   "ruby-two-seven":
     docker:
       - image: circleci/ruby:2.7
@@ -43,7 +40,6 @@ jobs:
       - checkout
       - ruby/install-deps
       - ruby/run-tests
-      - ruby/save-cache
   "jruby92-8jdk":
     docker:
       - image: circleci/jruby:9.2-jdk8
@@ -100,7 +96,6 @@ jobs:
           name: Run Rubocop
           command: bundle exec rubocop --format=json --out=rubocop-result.json
       - sonarcloud/scan
-      - ruby/save-cache
 
 workflows:
   version: 2
