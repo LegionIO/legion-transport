@@ -1,95 +1,106 @@
 version: 2.1
 orbs:
-  ruby: circleci/ruby@0.2.1
-  sonarcloud: sonarsource/sonarcloud@1.0.1
+  ruby: circleci/ruby@1.1.2
+  sonarcloud: sonarsource/sonarcloud@1.0.2
 
 jobs:
   "rubocop":
     docker:
-      - image: circleci/ruby:2.7-node
+      - image: cimg/ruby:2.7
     steps:
       - checkout
-      - ruby/load-cache
-      - ruby/install-deps
-      - run:
-          name: Run Rubocop
-          command: bundle exec rubocop
-      - ruby/save-cache
+      - restore_cache:
+          key: "bundler cache mri"
+      - run: bundle update
+      - run: bundle exec rubocop --format=json --out=rubocop-result.json
+      - store_test_results:
+          path: rubocop-result.json
+      - sonarcloud/scan
+      - run: bundle exec rubocop
+      - save_cache:
+          key: "bundler cache mri"
+          paths:
+            - "/usr/local/bundle"
   "ruby-two-five":
     docker:
-      - image: circleci/ruby:2.5
+      - image: cimg/ruby:2.5
     steps:
       - checkout
-      - ruby/load-cache
-      - run:
-          name: update bundler
-          command: gem update bundler
-      - ruby/install-deps
-      - ruby/run-tests
-      - ruby/save-cache
+      - restore_cache:
+          key: "bundler cache mri"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache mri"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
+      - store_test_results:
+          path: rspec-results.xml
+      - sonarcloud/scan
   "ruby-two-six":
     docker:
-      - image: circleci/ruby:2.6
+      - image: cimg/ruby:2.6
     steps:
       - checkout
-      - ruby/load-cache
-      - run:
-          name: update bundler
-          command: gem update bundler
-      - ruby/install-deps
-      - ruby/run-tests
-      - ruby/save-cache
+      - restore_cache:
+          key: "bundler cache mri"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache mri"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
+      - store_test_results:
+          path: rspec-results.xml
+      - sonarcloud/scan
   "ruby-two-seven":
     docker:
       - image: circleci/ruby:2.7
     steps:
       - checkout
-      - ruby/load-cache
-      - ruby/install-deps
-      - ruby/run-tests
-      - ruby/save-cache
-  "jruby-nine-two":
-    docker:
-      - image: circleci/jruby:9.2-jre
-    steps:
-      - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
+      - restore_cache:
+          key: "bundler cache mri"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache mri"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
       - store_test_results:
-          path: test-results
+          path: rspec-results.xml
       - sonarcloud/scan
-  "jruby-nine-two-e":
+  "jruby92-11jdk":
     docker:
-      - image: circleci/jruby:9.2.11-jre
+      - image: circleci/jruby:9.2-jre11
     steps:
       - checkout
-      - run:
-          name: Bundle Install
-          command: bundle install
-      - run:
-          name: Run RSpec
-          command: bundle exec rspec --format progress --format RspecJunitFormatter -o test-results/rspec/results.xml
-          when: always
+      - restore_cache:
+          key: "bundler cache jruby92-11jdk"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache jruby92-11jdk"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
       - store_test_results:
-          path: test-results
-  "sonarcloud":
+          path: rspec-results.xml
+      - sonarcloud/scan
+  "jruby92-14jdk":
     docker:
-      - image: circleci/ruby:2.7
+      - image: circleci/jruby:9.2-jdk14
     steps:
       - checkout
-      - ruby/load-cache
-      - ruby/install-deps
-      - ruby/run-tests
-      - run:
-          name: Run Rubocop
-          command: bundle exec rubocop --format=json --out=rubocop-result.json
+      - restore_cache:
+          key: "bundler cache jruby92-14jdk"
+      - run: bundle update
+      - save_cache:
+          key: "bundler cache jruby92-14jdk"
+          paths:
+            - "/usr/local/bundle"
+      - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
+      - store_test_results:
+          path: rspec-results.xml
       - sonarcloud/scan
-      - ruby/save-cache
 
 workflows:
   version: 2
@@ -105,14 +116,9 @@ workflows:
       - ruby-two-seven:
           requires:
             - ruby-two-five
-      - sonarcloud:
+      - jruby92-11jdk:
           requires:
-            - ruby-two-seven
-            - ruby-two-six
-      - jruby-nine-two:
+            - ruby-two-five
+      - jruby92-14jdk:
           requires:
-            - ruby-two-seven
-            - ruby-two-six
-      - jruby-nine-two-e:
-          requires:
-            - jruby-nine-two
+            - ruby-two-five
