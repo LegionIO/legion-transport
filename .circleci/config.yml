@@ -69,32 +69,16 @@ jobs:
       - store_test_results:
           path: rspec-results.xml
       - sonarcloud/scan
-  "jruby92-8jdk":
-    docker:
-      - image: circleci/jruby:9.2-jdk8
-    steps:
-      - checkout
-      - restore_cache:
-          key: "bundler cache jruby"
-      - run: bundle update
-      - save_cache:
-          key: "bundler cache jruby"
-          paths:
-            - "/usr/local/bundle"
-      - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
-      - store_test_results:
-          path: rspec-results.xml
-      - sonarcloud/scan
   "jruby92-11jdk":
     docker:
       - image: circleci/jruby:9.2-jre11
     steps:
       - checkout
       - restore_cache:
-          key: "bundler cache jruby"
+          key: "bundler cache jruby92-11jdk"
       - run: bundle update
       - save_cache:
-          key: "bundler cache jruby"
+          key: "bundler cache jruby92-11jdk"
           paths:
             - "/usr/local/bundle"
       - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
@@ -107,10 +91,10 @@ jobs:
     steps:
       - checkout
       - restore_cache:
-          key: "bundler cache jruby"
+          key: "bundler cache jruby92-14jdk"
       - run: bundle update
       - save_cache:
-          key: "bundler cache jruby"
+          key: "bundler cache jruby92-14jdk"
           paths:
             - "/usr/local/bundle"
       - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
@@ -132,13 +116,9 @@ workflows:
       - ruby-two-seven:
           requires:
             - ruby-two-five
-      - jruby92-8jdk:
-          requires:
-            - ruby-two-seven
-            - ruby-two-six
       - jruby92-11jdk:
           requires:
-            - jruby92-8jdk
+            - ruby-two-five
       - jruby92-14jdk:
           requires:
-            - jruby92-8jdk
+            - ruby-two-five
