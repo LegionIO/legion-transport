@@ -69,32 +69,16 @@ jobs:
       - store_test_results:
           path: rspec-results.xml
       - sonarcloud/scan
-  "jruby92-11jdk":
+  "ruby-three":
     docker:
-      - image: circleci/jruby:9.2-jre11
+      - image: circleci/ruby:3
     steps:
       - checkout
       - restore_cache:
-          key: "bundler cache jruby92-11jdk"
+          key: "bundler cache mri"
       - run: bundle update
       - save_cache:
-          key: "bundler cache jruby92-11jdk"
-          paths:
-            - "/usr/local/bundle"
-      - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
-      - store_test_results:
-          path: rspec-results.xml
-      - sonarcloud/scan
-  "jruby92-14jdk":
-    docker:
-      - image: circleci/jruby:9.2-jdk14
-    steps:
-      - checkout
-      - restore_cache:
-          key: "bundler cache jruby92-14jdk"
-      - run: bundle update
-      - save_cache:
-          key: "bundler cache jruby92-14jdk"
+          key: "bundler cache mri"
           paths:
             - "/usr/local/bundle"
       - run: bundle exec rspec --format progress --format RspecJunitFormatter -o rspec-results.xml
@@ -116,9 +100,6 @@ workflows:
       - ruby-two-seven:
           requires:
             - ruby-two-five
-      - jruby92-11jdk:
-          requires:
-            - ruby-two-five
-      - jruby92-14jdk:
+      - ruby-three:
           requires:
             - ruby-two-five
