@@ -7,7 +7,7 @@ pipelines:
           name: Push to RubyGems
           deployment: RubyGems
           script:
-            - gem install bundler gem-release rspec
+            - gem install gem-release
             - (umask  077 ; echo $gem_creds | base64 --decode > ~/.gem/credentials)
             - gem release
           artifacts:
