@@ -35,7 +35,7 @@ module Legion
             server: extra_server, servers: Array(extra_servers),
             port: port
           )
-        }.merge(grab_vault_creds)
+        }
       end
 
       DEFAULT_AMQP_PORT = 5672
@@ -48,18 +48,6 @@ module Legion
 
         all.map! { |s| s.to_s.include?(':') ? s.to_s : "#{s}:#{port}" }
         all.uniq
-      end
-
-      def self.grab_vault_creds
-        return {} unless Legion::Settings[:crypt][:vault][:connected]
-
-        Legion::Transport.logger.info 'Attempting to grab RabbitMQ creds from vault'
-        lease = Legion::Crypt.read('rabbitmq/creds/legion', type: nil)
-        Legion::Transport.logger.debug 'successfully grabbed amqp username from Vault'
-        { user: lease[:username], password: lease[:password] }
-      rescue StandardError
-        Legion::Transport.logger.warn 'Error reading rabbitmq creds from vault'
-        {}
       end
 
       def self.channel

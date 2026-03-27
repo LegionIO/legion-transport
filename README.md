@@ -2,7 +2,7 @@
 
 Legion::Transport is the Ruby gem responsible for connecting LegionIO to its FIFO queue system (RabbitMQ over AMQP 0.9.1). It provides thread-safe connection management, exchange/queue abstractions, message publishing with optional encryption, and consumer wrappers.
 
-**Version**: 1.3.10
+**Version**: 1.4.1
 
 ## Features
 
@@ -166,12 +166,20 @@ Configuration is managed through `legion-settings` with environment variable ove
 
 ### Vault Integration
 
-When connected to HashiCorp Vault, credentials are automatically fetched from `rabbitmq/creds/legion`:
+RabbitMQ credentials are managed by the LeaseManager via `lease://` URI references in transport settings:
 
-```ruby
-# Vault must be connected via legion-crypt
-# Credentials are fetched automatically during connection setup
+```json
+{
+  "transport": {
+    "connection": {
+      "user": "lease://rabbitmq#username",
+      "password": "lease://rabbitmq#password"
+    }
+  }
+}
 ```
+
+The lease path (e.g., `rabbitmq/creds/agent`) is configured in `crypt.vault.leases.rabbitmq.path`.
 
 ### TLS Support
 

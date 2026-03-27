@@ -8,7 +8,7 @@
 Ruby gem that manages the connection between LegionIO and its FIFO queue system (RabbitMQ over AMQP 0.9.1). Provides abstractions for exchanges, queues, messages, and consumers with thread-safe connection management.
 
 **GitHub**: https://github.com/LegionIO/legion-transport
-**Version**: 1.3.10
+**Version**: 1.4.1
 **License**: Apache-2.0
 
 ## Architecture
@@ -34,8 +34,9 @@ Legion::Transport
 │       ├── Agent       # Per-agent queue (auto-delete, routing key: agent.<agent_id>)
 │       ├── NodeCrypt   # Node encryption queue
 │       ├── NodeStatus  # Node status queue
-│       ├── TaskLog     # Task logging queue
-│       └── TaskUpdate  # Task update queue
+│       ├── TaskLog         # Task logging queue
+│       ├── TaskUpdate      # Task update queue
+│       └── RegionOutbound  # Cross-region outbound queue for mesh routing
 ├── Message             # Base message class with publish, encode, encrypt
 │   └── Messages/
 │       ├── Task        # Task messages with dynamic routing keys
@@ -51,11 +52,23 @@ Legion::Transport
 ├── Helper              # Injectable transport mixin for LEX extensions
 ├── Local               # In-memory pub/sub for local development mode (no RabbitMQ)
 ├── Spool               # Disk-backed message buffer: persist messages when RabbitMQ unavailable, replay on reconnect
+├── TenantProvisioner   # Creates per-tenant exchanges + queues on first publish; idempotent with TTL cache
+├── TenantQuota         # Per-tenant rate limiting and message quota enforcement
+├── TenantTopology      # Tracks per-tenant exchange/queue topology (discovery, cleanup)
 ├── Settings            # Default configuration with env var overrides
-└── Version             # 1.3.10
+└── Version             # 1.4.1
 ```
 
 ## Key Design Patterns
+
+### Force Reconnect
+
+`Connection.force_reconnect` performs a socket-first teardown (closes the underlying TCP socket before calling `Bunny::Session#close`) to break stuck connections that don't respond to the normal close protocol. Tracks recovery rate over a 5-window/60s sliding window. Calls registered `on_force_reconnect` callbacks after reconnection. Sets a shutdown flag to prevent reconnection loops during intentional shutdown.
+
+```ruby
+Legion::Transport::Connection.force_reconnect
+Legion::Transport::Connection.on_force_reconnect { |info| alert_on_call(info) }
+```
 
 ### AMQP Client / Lite Mode
 Uses `bunny` gem for AMQP 0.9.1. The entry point sets `Legion::Transport::TYPE` and `Legion::Transport::CONNECTOR` as constants. When `LEGION_MODE=lite` env var is set, `TYPE = 'local'` and `CONNECTOR = InProcess` instead of Bunny. `Connection.lite_mode?` checks `TYPE == 'local'`. `Connection.setup` returns an InProcess session in lite mode, skipping Bunny entirely.
@@ -101,7 +114,7 @@ Settings are loaded via `Legion::Transport::Settings` with env var overrides:
 | `transport.messages.ttl` | `nil` | Message TTL |
 | `transport.messages.persistent` | `true` | Persistent messages |
 
-Vault integration: If `Legion::Settings[:crypt][:vault][:connected]` is true, credentials are fetched from `rabbitmq/creds/legion` in Vault.
+Vault integration: RabbitMQ credentials are managed by the LeaseManager via `lease://rabbitmq#username` / `lease://rabbitmq#password` URI references in transport settings. The lease path (e.g., `rabbitmq/creds/agent`) is configured in `crypt.vault.leases.rabbitmq.path`.
 
 ## File Map
 
@@ -121,7 +134,11 @@ Vault integration: If `Legion::Settings[:crypt][:vault][:connected]` is true, cr
 | `lib/legion/transport/message.rb` | Base Message class with publish/encode/encrypt |
 | `lib/legion/transport/consumer.rb` | AMQP consumer wrapper |
 | `lib/legion/transport/spool.rb` | Disk-backed message buffer (~/.legionio/spool, 10MB/file, 500MB total, 3-day TTL) |
-| `lib/legion/transport/settings.rb` | Default config, env var loading, Vault cred fetch |
+| `lib/legion/transport/tenant_provisioner.rb` | Per-tenant exchange/queue creation with TTL idempotency cache |
+| `lib/legion/transport/tenant_quota.rb` | Per-tenant rate limiting and message quota enforcement |
+| `lib/legion/transport/tenant_topology.rb` | Per-tenant topology tracking (discovery, cleanup) |
+| `lib/legion/transport/queues/region_outbound.rb` | Cross-region outbound queue for mesh routing |
+| `lib/legion/transport/settings.rb` | Default config, env var loading, host resolution |
 | `lib/legion/transport/version.rb` | Version constant |
 | `spec/` | RSpec test suite |
 
@@ -166,7 +183,7 @@ bundle exec rspec
 bundle exec rubocop
 ```
 
-Spec count: 358+ examples (InProcess adapter specs added in v1.3.10)
+Spec count: 448+ examples (force_reconnect, recovery tracking, tenant provisioner specs added in v1.4.x)
 
 ---
 

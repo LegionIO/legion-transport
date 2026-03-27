@@ -1,5 +1,10 @@
 # Legion::Transport ChangeLog
 
+## [1.4.4] - 2026-03-26
+
+### Removed
+- `grab_vault_creds` legacy method from `Settings` — RabbitMQ credentials are now exclusively managed by the LeaseManager via `lease://rabbitmq#username` / `lease://rabbitmq#password` URI references. The removed method hardcoded the wrong Vault path (`rabbitmq/creds/legion` instead of `rabbitmq/creds/agent`).
+
 ## [1.4.3] - 2026-03-26
 
 ### Added
