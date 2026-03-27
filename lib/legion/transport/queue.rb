@@ -31,10 +31,9 @@ module Legion
         hash[:exclusive] = false
         hash[:block] = false
         hash[:auto_delete] = false
-        hash[:arguments] = {
-          'x-queue-type':           'quorum',
-          'x-dead-letter-exchange': "#{self.class.ancestors.first.to_s.split('::')[2].downcase}.dlx"
-        }
+        args = { 'x-queue-type': 'quorum' }
+        args[:'x-dead-letter-exchange'] = dlx_exchange_name if dlx_enabled
+        hash[:arguments] = args
         hash
       end
 
@@ -42,11 +41,22 @@ module Legion
         Concurrent::Hash.new
       end
 
+      def dlx_enabled
+        true
+      end
+
+      def dlx_exchange_name
+        "#{self.class.ancestors.first.to_s.split('::')[2].downcase}.dlx"
+      end
+
       def ensure_dlx(merged_options)
         dlx_name = merged_options.dig(:arguments, :'x-dead-letter-exchange')
         return if dlx_name.nil? || dlx_name.empty?
 
         channel.exchange_declare(dlx_name, 'fanout', durable: true, auto_delete: false)
+        channel.queue_declare("#{dlx_name}.queue", durable: true, auto_delete: false,
+                                                    arguments: { 'x-queue-type': 'classic' })
+        channel.queue_bind("#{dlx_name}.queue", dlx_name, routing_key: '#')
       rescue StandardError => e
         Legion::Transport.logger.warn "Failed to declare DLX #{dlx_name}: #{e.message}"
       end

@@ -1,5 +1,12 @@
 # Legion::Transport ChangeLog
 
+## [1.4.3] - 2026-03-26
+
+### Added
+- `dlx_enabled` opt-out method for queue DLX creation
+- `dlx_exchange_name` method for per-LEX DLX naming
+- Per-LEX DLX queue declaration in `ensure_dlx`
+
 ## [1.4.2] - 2026-03-26
 
 ### Fixed
