@@ -301,12 +301,12 @@ module Legion
           @channel_registry ||= Concurrent::Hash.new
           return if @channel_registry.empty?
 
-          @channel_registry.each_value do |channel|
-            channel.close if channel&.open?
+          @channel_registry.keys.each do |thread| # rubocop:disable Style/HashEachMethods
+            channel = @channel_registry.delete(thread)
+            channel&.close if channel&.open?
           rescue StandardError => e
             handle_exception(e, level: :warn, handled: true, operation: 'transport.connection.close_tracked_channel')
           end
-          @channel_registry.clear
         end
 
         def sweep_dead_thread_channels
@@ -314,14 +314,16 @@ module Legion
           return if @channel_registry.empty?
 
           swept = 0
-          @channel_registry.each do |thread, channel|
+          @channel_registry.keys.each do |thread| # rubocop:disable Style/HashEachMethods
             next if thread&.alive?
 
-            if channel&.open?
+            channel = @channel_registry.delete(thread)
+            next unless channel
+
+            if channel.open?
               channel.close
               swept += 1
             end
-            @channel_registry.delete(thread)
           rescue StandardError => e
             @channel_registry.delete(thread)
             handle_exception(e, level: :warn, handled: true, operation: 'transport.connection.sweep_channel')
