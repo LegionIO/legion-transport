@@ -245,8 +245,8 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
   describe '#ensure_dlx' do
     let(:channel_double) do
       dbl = instance_double('Bunny::Channel')
-      allow(dbl).to receive(:exchange_declare)
-      allow(dbl).to receive(:queue_declare)
+      allow(dbl).to receive(:exchange_declare_without_recording_topology)
+      allow(dbl).to receive(:queue_declare_without_recording_topology)
       allow(dbl).to receive(:queue_bind)
       allow(dbl).to receive(:open?).and_return(false)
       dbl
@@ -255,6 +255,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
     before do
       session_double = instance_double('Bunny::Session')
       allow(session_double).to receive(:create_channel).and_return(channel_double)
+      allow(session_double).to receive(:open?).and_return(true)
       allow(Legion::Transport::Connection).to receive(:session).and_return(session_double)
       allow(instance).to receive(:safely_close_channel)
     end
@@ -265,7 +266,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
       it 'creates the DLX exchange and queue' do
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
         instance.ensure_dlx(merged_options)
-        expect(channel_double).to have_received(:exchange_declare).with('github.dlx', 'fanout', anything)
+        expect(channel_double).to have_received(:exchange_declare_without_recording_topology).with('github.dlx', 'fanout', anything)
       end
     end
 
@@ -277,7 +278,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
         stub_mode(infra: true, agent: false)
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
         instance.ensure_dlx(merged_options)
-        expect(channel_double).not_to have_received(:exchange_declare)
+        expect(channel_double).not_to have_received(:exchange_declare_without_recording_topology)
       end
 
       it 'skips DLX creation for worker mode' do
@@ -285,7 +286,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
         stub_mode(infra: false, agent: false)
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
         instance.ensure_dlx(merged_options)
-        expect(channel_double).not_to have_received(:exchange_declare)
+        expect(channel_double).not_to have_received(:exchange_declare_without_recording_topology)
       end
 
       it 'creates DLX for infra mode after identity resolves' do
@@ -293,7 +294,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
         stub_mode(infra: true, agent: false)
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
         instance.ensure_dlx(merged_options)
-        expect(channel_double).to have_received(:exchange_declare).with('github.dlx', 'fanout', anything)
+        expect(channel_double).to have_received(:exchange_declare_without_recording_topology).with('github.dlx', 'fanout', anything)
       end
 
       it 'skips DLX creation for agent mode (agent is not topology owner)' do
@@ -301,7 +302,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
         stub_mode(infra: false, agent: true)
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
         instance.ensure_dlx(merged_options)
-        expect(channel_double).not_to have_received(:exchange_declare)
+        expect(channel_double).not_to have_received(:exchange_declare_without_recording_topology)
       end
     end
   end

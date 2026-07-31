@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.4.30] - 2026-07-31
+
+### Fixed
+- Fixed DLX recovery loop (`Bunny::ChannelAlreadyClosed` on `legion.*.dlx` exchanges and queues). The `declare_dlx` method recorded DLX topology on a short-lived channel that was immediately closed after declaration; Bunny's automatic recovery then repeatedly attempted to re-declare on the dead channel, looping forever. Now uses `exchange_declare_without_recording_topology` and `queue_declare_without_recording_topology` so the DLX (durable on the server) is not tracked for client-side recovery. Also added explicit `ChannelAlreadyClosed` handling in `ensure_dlx` and `recreate_dlx` to fail once with context instead of looping.
+
 ## [1.4.29] - 2026-05-22
 
 ### Added
