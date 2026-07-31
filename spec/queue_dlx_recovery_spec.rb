@@ -55,10 +55,19 @@ RSpec.describe 'Queue DLX channel recovery' do
     end
 
     context 'when the created channel is already closed' do
+      let(:channel_closed_error) do
+        klass = Legion::Transport::CONNECTOR::ChannelAlreadyClosed
+        if klass.instance_method(:initialize).arity.abs > 1
+          klass.new('cannot use a closed channel', closed_channel)
+        else
+          klass.new('cannot use a closed channel')
+        end
+      end
+
       before do
         allow(Legion::Transport::Connection).to receive(:session).and_return(closed_session)
         allow(closed_channel).to receive(:exchange_declare_without_recording_topology)
-          .and_raise(Legion::Transport::CONNECTOR::ChannelAlreadyClosed.new('cannot use a closed channel'))
+          .and_raise(channel_closed_error)
       end
 
       it 'handles the error without looping' do
