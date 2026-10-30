@@ -41,7 +41,7 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       release << true
       expect(first.value).to be true
     ensure
-      release << true
+      release&.<< true
       [first, third].compact.each { |thread| thread.kill.join }
     end
 
@@ -178,7 +178,7 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       expect(channel).to have_received(:close)
       expect(connection.channel_registry_size).to eq(0)
     ensure
-      release << true
+      release&.<< true
       creator&.kill&.join
     end
 
@@ -208,7 +208,7 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       expect(socket).to be_closed
       expect(connection.session_open?).to be false
     ensure
-      release << true
+      release&.<< true
       creator&.kill&.join
     end
   end
