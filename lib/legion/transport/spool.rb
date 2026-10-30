@@ -290,7 +290,7 @@ module Legion
           @upgrade_waiting_for_dependency = true
           raise
         ensure
-          original.close unless original.equal?(claim.last)
+          original&.close unless original.equal?(claim.last)
           replacement&.close unless replacement.equal?(claim.last)
           File.delete(temporary) if temporary && File.exist?(temporary)
         end
