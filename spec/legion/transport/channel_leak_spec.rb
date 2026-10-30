@@ -22,35 +22,11 @@ RSpec.describe 'Channel leak prevention', :rabbitmq do
 
   describe 'Connection.setup' do
     it 'closes the QoS channel after applying basic_qos' do
-      # Shut down so we can observe a fresh Connection.setup cycle through
-      # the session-creation branch (not the session.open? fast path).
-      Legion::Transport::Connection.shutdown
-
-      # Intercept create_session_with_failover so we control the session object
-      # and can count channels after setup runs.
-      raw_session = Legion::Transport::Connection.send(:create_session_with_failover, connection_name: 'test-qos')
-      raw_session.start
-
-      allow(Legion::Transport::Connection).to receive(:create_session_with_failover)
-        .and_return(raw_session)
-
-      # Ensure @session is nil so setup takes the creation branch (creates QoS channel)
-      Legion::Transport::Connection.instance_variable_set(:@session, nil)
-      Legion::Transport::Connection.instance_variable_set(
-        :@channel_thread, Concurrent::ThreadLocalVar.new(nil)
-      )
-
-      # setup will create_session_with_failover → start → create QoS channel → apply_qos_and_close
-      # After that only the log_channel should remain open.
-      Legion::Transport::Connection.setup
-
-      open_after = raw_session.instance_variable_get(:@channels)&.count { |_k, v| v&.open? } || 0
-      # Only 1 open channel (log_channel) — QoS channel must have been closed.
-      expect(open_after).to eq(1)
-
-      # Restore a clean connection for subsequent tests
       Legion::Transport::Connection.shutdown
       Legion::Transport::Connection.setup
+
+      active_channels = Legion::Transport::Connection.session.instance_variable_get(:@channels).values.select(&:open?)
+      expect(active_channels.size).to eq(1) # Only the log channel remains after initial QoS.
     end
 
     it 'closes old @log_channel before creating a new one' do

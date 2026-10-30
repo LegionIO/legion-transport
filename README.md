@@ -125,7 +125,15 @@ exchange.publish(payload, routing_key: 'task.my_runner.my_function')
 }
 ```
 
-Supported server keys: `host:` (string), `hosts:` (array), `server:` (string), `servers:` (array). All are merged and deduped. Port 5672 is injected where omitted. Multiple hosts enable Bunny's cluster failover.
+Supported server keys: `host:` (string), `hosts:` (array), `server:` (string), `servers:` (array). All are merged and deduped. Port 5672 is injected where omitted. Connection setup attempts each configured host, including the AMQP handshake, and closes failed attempts before moving to the next host.
+
+### Pooling and recovery
+
+- Set `transport.connection_pool_size` above `1` to enable lazy session pooling. Publisher channels are reused per thread and tracked for cleanup.
+- Pool checkout uses one monotonic deadline for waiting and connection creation. Shutdown wakes blocked callers with `Legion::Transport::PoolClosed`; a late factory result is closed instead of returning to the pool.
+- `Connection.shutdown` shares a five-second teardown deadline across owned sessions, closes their sockets, and stops consumer workers. Channel or session creation racing with shutdown cannot install stale resources.
+- `Connection.force_reconnect` permits one active reconnect. It restores existing consumer/channel/queue objects, declarations, bindings, and QoS before running `on_force_reconnect` callbacks. Cancelled consumers remain cancelled, and repeated reconnects reuse publisher channels.
+- Restoration failures return `false`, close the failed replacement, and retain the subscription snapshot for a later reconnect attempt. Restoration refuses to rebind channels while old consumer workers remain alive.
 
 ## Configuration
 

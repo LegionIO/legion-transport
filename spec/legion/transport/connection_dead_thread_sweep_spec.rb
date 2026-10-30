@@ -86,25 +86,6 @@ RSpec.describe 'Connection dead-thread channel sweep' do
     end
   end
 
-  describe '#close_all_tracked_channels' do
-    it 'closes all tracked channels and clears the registry' do
-      ch1 = instance_double('Bunny::Channel', open?: true)
-      ch2 = instance_double('Bunny::Channel', open?: true)
-      t1 = instance_double('Thread')
-      t2 = instance_double('Thread')
-
-      registry = connection.instance_variable_get(:@channel_registry)
-      registry[t1] = ch1
-      registry[t2] = ch2
-
-      expect(ch1).to receive(:close)
-      expect(ch2).to receive(:close)
-
-      connection.send(:close_all_tracked_channels)
-      expect(registry).to be_empty
-    end
-  end
-
   describe '#channel_registry_size' do
     it 'returns the number of tracked channels' do
       registry = connection.instance_variable_get(:@channel_registry)

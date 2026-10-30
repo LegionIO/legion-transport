@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.4.31] - 2026-10-29
+
+### Fixed
+- Bound pool checkout with a monotonic deadline that includes connection creation; reserve capacity without holding the pool mutex during network operations, wake waiters on shutdown, and reject late connections.
+- Bound connection shutdown across pooled, publisher, log, and build sessions with one five-second deadline; disable recovery, close sockets, and stop old consumer workers before replacing sessions.
+- Keep forced reconnect exclusive to its owning caller and restore existing queue, channel, and consumer references, bindings, and QoS before notifying reconnect callbacks.
+- Reuse and track thread-local publisher channels in pool mode; preserve publisher caches across repeated forced reconnects without accumulating log channels.
+- Start each Bunny session inside its host failover attempt and clean up failed handshakes before advancing to the next host. Fixes #41.
+
 ## [1.4.30] - 2026-07-31
 
 ### Fixed
