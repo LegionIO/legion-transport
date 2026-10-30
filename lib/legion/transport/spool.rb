@@ -251,7 +251,7 @@ module Legion
           true
         ensure
           begin
-            compact_claim(file: file, io: io, offset: confirmed_offset) if confirmed_offset.positive? && io.equal?(claim.last)
+            compact_claim(file: file, io: io, offset: confirmed_offset) if confirmed_offset&.positive? && io.equal?(claim.last)
           ensure
             claim.last.close
           end

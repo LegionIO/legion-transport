@@ -18,6 +18,7 @@
 - Preserve existing queues, bindings, and DLQ contents on declaration mismatches; surface required DLX failures, report actual HTTP publish outcomes, and default to persistent messages with prefetch 2 while retaining explicit false/zero overrides. Fixes #45.
 - Fail closed when requested encryption is not ready, bound encryption attempts, retain cipher/IV metadata in spool replay, and preserve explicit plaintext and bootstrap exceptions. Fixes #46.
 - Automatically upgrade historical raw JSONL spool records to durable wire envelopes before replay; preserve routing, tenant, encryption intent and false/zero metadata, replace stale IVs, and reuse stored ciphertext across interrupted replay. Retry key readiness and late-loaded exchange classes without a manual trigger. Retain original data on failed or interrupted conversion and hold file ownership across atomic replacement.
+- Keep spool claim cleanup safe when shutdown interrupts the drainer before its progress offset is initialized.
 
 ### Changed
 - Direct `Local.subscribe` uses `exchange_name:` for named exchanges; its default is the default exchange, not an unscoped routing-key subscription.

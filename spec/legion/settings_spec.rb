@@ -107,10 +107,13 @@ end
 RSpec.describe Legion::Transport::Settings, 'durability and backpressure defaults' do
   around do |example|
     keys = %w[transport.messages.persistent transport.prefetch]
-    saved = keys.to_h { |key| [key, ENV.delete(key)] }
-    example.run
-  ensure
-    saved.each { |key, value| ENV[key] = value }
+    saved = keys.to_h { |key| [key, ENV.fetch(key, nil)] }
+    begin
+      keys.each { |key| ENV.delete(key) }
+      example.run
+    ensure
+      saved.each { |key, value| ENV[key] = value }
+    end
   end
 
   it 'requests persistent messages and bounded prefetch when no override exists' do
