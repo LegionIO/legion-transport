@@ -79,7 +79,8 @@ module Legion
         end
 
         def migrate(tenant_id:, queues: nil, max_messages: 10_000, timeout: 30, dry_run: false)
-          result = { tenant_id: tenant_id.to_s.strip, status: :planned, moved: 0, queues: [], errors: [] }
+          result = { tenant_id: nil, status: :planned, moved: 0, queues: [], errors: [] }
+          result[:tenant_id] = tenant_id.to_s.strip
           session = nil
           transfers = []
           validate_request!(tenant_id: result[:tenant_id], max_messages: max_messages, timeout: timeout, dry_run: dry_run)
@@ -108,7 +109,7 @@ module Legion
           end
           result
         rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'transport.tenant_migration.migrate', tenant_id: tenant_id)
+          handle_exception(e, level: :warn, handled: true, operation: 'transport.tenant_migration.migrate', tenant_id: result[:tenant_id])
           result[:status] = error_status(error: e)
           result[:errors] << { error_class: e.class.name, error: e.message }
           result[:queues].each do |plan|
@@ -283,7 +284,7 @@ module Legion
             envelope[:headers] = (envelope[:headers] || {}).merge(ORIGINAL_EXCHANGE_HEADER => delivery.exchange)
             confirm_transfer(transfer: transfer, payload: payload, envelope: envelope, deadline: limits[:deadline])
 
-            source_channel.basic_ack(delivery.delivery_tag)
+            source_channel.acknowledge(delivery.delivery_tag)
             delivery = nil
             plan[:moved] += 1
             result[:moved] += 1
@@ -324,7 +325,7 @@ module Legion
           return unless channel&.open?
 
           Timeout.timeout(1) do
-            channel.basic_reject(delivery.delivery_tag, true)
+            channel.reject(delivery.delivery_tag, true)
             # Reject is asynchronous; an immediate passive declaration can still report zero.
             loop do
               remaining = channel.queue_declare(plan[:source], passive: true).message_count

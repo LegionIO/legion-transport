@@ -187,6 +187,47 @@ RSpec.describe Legion::Transport::TenantMigration, :rabbitmq do
     expect(@session.queue_exists?(target_queue_name)).to be false
   end
 
+  it 'returns the original coercion error without repeating coercion during rescue logging' do
+    legacy_topology
+    publish_source
+    tenant = Object.new
+    tenant.define_singleton_method(:to_s) { raise IOError, 'tenant coercion failed' }
+
+    result = described_class.migrate(tenant_id: tenant, queues: @manifest)
+
+    expect(result).to include(status: :failed, moved: 0, queues: [],
+                              errors: [{ error_class: 'IOError', error: 'tenant coercion failed' }])
+    expect(@source.pop.last).to eq('original ciphertext')
+    expect(@session.queue_exists?(target_queue_name)).to be false
+  end
+
+  it 'acknowledges and requeues broker deliveries with versioned delivery tags' do
+    legacy_topology
+    tag_type = Struct.new(:value) do
+      def to_i
+        value
+      end
+    end
+    @migration_session_hook = lambda do |session|
+      allow(session).to receive(:create_channel).and_wrap_original do |create|
+        create.call.tap do |channel|
+          allow(channel).to receive(:basic_get).and_wrap_original do |get, *arguments, **options|
+            get.call(*arguments, **options).tap do |delivery, _properties, _payload|
+              delivery.delivery_tag = tag_type.new(delivery.delivery_tag.to_i) if delivery
+            end
+          end
+        end
+      end
+    end
+    publish_source(payload: 'valid owner', headers: { tenant_id: @tenant })
+    publish_source(payload: 'conflicting owner', headers: { tenant_id: 'another-tenant' })
+
+    expect(migrate).to include(status: :blocked, moved: 1)
+    expect(target_queue.pop.last).to eq('valid owner')
+    expect(@source.pop.last).to eq('conflicting owner')
+    expect(@source.message_count).to eq(0)
+  end
+
   it 'refuses active source consumers before creating targets in both planning and execution' do
     legacy_topology
     consumer = @source.subscribe(manual_ack: true) { |_delivery, _properties, _payload| nil }

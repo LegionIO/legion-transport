@@ -22,6 +22,7 @@
 - Complete tenant queue and DLQ data migration with explicit/registered manifests, nonmutating plans, exclusive source locks, tenant-conflict checks, byte-preserving routed confirmation before source acknowledgement, bounded resumable progress, and an authenticated-host HTTP endpoint.
 - Quarantine malformed and missing/unroutable-destination spool records without blocking healthy work. Add durable inspect/repair/retry APIs, stable recovery IDs, per-record cross-process ownership, atomic ready-state persistence, and delivered tombstones that prevent stale journal markers from resurrecting completed repairs.
 - Recover historical Dynamic destinations from saved function metadata, scope literal legacy exchanges by the saved tenant, and retry unavailable encryption/extension metadata independently of healthy records. Preserve ciphertext and IV during destination repair.
+- Use Bunny's version-aware acknowledgement/rejection APIs during tenant migration, wait for asynchronous requeue visibility, and preserve structured failures when tenant normalization raises without repeating coercion during logging.
 
 ### Changed
 - Direct `Local.subscribe` uses `exchange_name:` for named exchanges; its default is the default exchange, not an unscoped routing-key subscription.
