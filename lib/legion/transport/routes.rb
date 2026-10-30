@@ -19,12 +19,15 @@ module Legion
         register_status(app)
         register_discovery(app)
         register_publish(app)
+        register_spool_recovery(app)
+        register_tenant_migration(app)
       end
 
       def self.register_helpers(app)
         app.helpers Legion::Logging::Helper
         register_json_helpers(app)
         register_transport_helpers(app)
+        register_admin_errors(app)
       end
 
       def self.register_json_helpers(app)
@@ -164,9 +167,84 @@ module Legion
         end
       end
 
+      def self.register_admin_errors(app)
+        app.helpers do
+          define_method(:transport_admin_request) do |&operation|
+            operation.call
+          rescue KeyError => e
+            handle_exception(e, level: :warn, handled: true, operation: :transport_admin_request)
+            json_error('recovery_not_found', e.message, status_code: 404)
+          rescue ArgumentError, TypeError, Legion::Transport::Spool::LegacyRecordError => e
+            handle_exception(e, level: :warn, handled: true, operation: :transport_admin_request)
+            json_error('invalid_recovery_request', e.message, status_code: 422)
+          rescue Legion::Transport::EncryptionNotReady => e
+            handle_exception(e, level: :warn, handled: true, operation: :transport_admin_request)
+            json_error('encryption_not_ready', e.message, status_code: 503)
+          rescue StandardError => e
+            handle_exception(e, level: :error, handled: true, operation: :transport_admin_request)
+            json_error('transport_recovery_failed', e.message, status_code: 503)
+          end
+        end
+      end
+
+      def self.register_spool_recovery(app)
+        app.get '/api/transport/spool' do
+          transport_admin_request { json_response(Legion::Transport::Spool.status) }
+        end
+        app.get '/api/transport/spool/recovery' do
+          transport_admin_request do
+            entries = Legion::Transport::Spool.recovery_entries(status: params['status'],
+                                                                limit:  Integer(params.fetch('limit', '100')),
+                                                                offset: Integer(params.fetch('offset', '0')))
+            json_response(entries)
+          end
+        end
+        app.get '/api/transport/spool/recovery/:id' do
+          transport_admin_request { json_response(Legion::Transport::Spool.recovery_record(id: params['id'])) }
+        end
+        app.post '/api/transport/spool/recovery/:id/repair' do
+          transport_admin_request do
+            result = Legion::Transport::Spool.repair_record(id: params['id'], changes: parse_request_body)
+            json_response(result, status_code: 202)
+          end
+        end
+        app.post '/api/transport/spool/recovery/:id/retry' do
+          transport_admin_request do
+            result = Legion::Transport::Spool.retry_recovery(id: params['id'])
+            status_code = case result[:status]
+                          when 'ready', 'waiting' then 202
+                          when 'delivered' then 200
+                          else 422
+                          end
+            json_response(result, status_code: status_code)
+          end
+        end
+      end
+
+      def self.register_tenant_migration(app)
+        app.post '/api/transport/tenants/:tenant_id/migrate' do
+          transport_admin_request do
+            body = parse_request_body
+            result = Legion::Transport::TenantMigration.migrate(
+              tenant_id: params['tenant_id'], queues: body[:queues], dry_run: body.fetch(:dry_run, false),
+              max_messages: body.fetch(:max_messages, 10_000), timeout: body.fetch(:timeout, 30)
+            )
+            status_code = case result[:status]
+                          when :planned, :completed then 200
+                          when :pending then 202
+                          when :blocked then 409
+                          else 503
+                          end
+            status_code = 422 if result[:errors].any? { |error| %w[ArgumentError KeyError TypeError].include?(error[:error_class]) }
+            json_response(result, status_code: status_code)
+          end
+        end
+      end
+
       class << self
         private :register_helpers, :register_json_helpers, :register_transport_helpers,
-                :register_status, :register_discovery, :register_publish
+                :register_status, :register_discovery, :register_publish, :register_admin_errors,
+                :register_spool_recovery, :register_tenant_migration
       end
     end
   end

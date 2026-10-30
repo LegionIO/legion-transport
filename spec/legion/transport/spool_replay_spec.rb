@@ -73,14 +73,15 @@ RSpec.describe Legion::Transport::Spool, 'automatic replay' do
     expect(described_class.count).to eq(0)
   end
 
-  it 'keeps unroutable work until a subsequent trigger can route it' do
+  it 'retains unroutable work for an explicit retry after topology is repaired' do
     spool_wire
     described_class.replay_async
     finish_replay
-    expect(described_class.count).to eq(1)
+    expect(described_class.status).to include(pending: 0, quarantined: 1)
+    entry = described_class.recovery_entries.fetch(0)
 
     subscribe_to_replay
-    described_class.replay_async
+    described_class.retry_recovery(id: entry[:id])
     finish_replay
     expect(deliveries.pop(timeout: 2).first).to eq('ciphertext')
     expect(described_class.count).to eq(0)

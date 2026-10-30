@@ -15,9 +15,13 @@ module Legion
 
         class << self
           def convert(record:)
-            validate_record(record: record)
+            raise LegacyRecordError, 'Legacy spool record must be a Hash' unless record.is_a?(Hash)
+
             payload = record[:payload]
             options = payload.is_a?(Hash) ? payload : {}
+            record = record.merge(exchange:    record[:exchange] || options[:exchange],
+                                  routing_key: record[:routing_key] || options[:routing_key])
+            validate_record(record: record)
             envelope = saved_envelope(record: record, options: options)
             tenant_id = record.fetch(:tenant_id) { options.fetch(:tenant_id, 'default') }
             tenant_id = Legion::Transport::TenantTopology.resolve_tenant_id(tenant_id: tenant_id || 'default')
@@ -50,7 +54,6 @@ module Legion
           private
 
           def validate_record(record:)
-            raise LegacyRecordError, 'Legacy spool record must be a Hash' unless record.is_a?(Hash)
             raise LegacyRecordError, 'Legacy spool record is missing its raw payload' unless record.key?(:payload)
             raise LegacyRecordError, 'Legacy spool record is missing its exchange destination' unless record[:exchange].is_a?(String)
             raise LegacyRecordError, 'Legacy spool record is missing its saved routing key' unless record[:routing_key].is_a?(String)
@@ -74,7 +77,7 @@ module Legion
 
           def destination(record:, options:, tenant_id:)
             name = record[:exchange]
-            return { name: name, type: 'topic' } unless CONSTANT_NAME.match?(name)
+            return { name: Legion::Transport::TenantTopology.exchange_name(name, tenant_id: tenant_id), type: 'topic' } unless CONSTANT_NAME.match?(name)
 
             klass = Object.const_get(name)
             raise LegacyRecordError, "Legacy spool destination #{name} is not an Exchange or Message class" unless klass.is_a?(Class)
@@ -82,10 +85,18 @@ module Legion
             if klass <= Legion::Transport::Exchange
               declaration(klass: klass, name: nil, options: options, tenant_id: tenant_id)
             elsif klass <= Legion::Transport::Message
+              if klass <= Legion::Transport::Messages::Dynamic
+                options = options[:args].merge(options) if options[:args].is_a?(Hash)
+                raise LegacyRecordError, 'Legacy dynamic message has no saved function_id' unless options[:function_id]
+              end
               saved_message = klass.allocate
               saved_message.instance_variable_set(:@options, options.merge(tenant_id: tenant_id))
+              if saved_message.is_a?(Legion::Transport::Messages::Dynamic) && saved_message.function.nil?
+                raise LegacyDependencyNotReady, 'Legacy dynamic message function metadata is not loaded'
+              end
+
               exchange = saved_message.exchange
-              declaration(klass: exchange, name: options[:exchange], options: options, tenant_id: tenant_id)
+              declaration(klass: exchange, name: saved_message.publish_exchange_name, options: options, tenant_id: tenant_id)
             else
               raise LegacyRecordError, "Legacy spool destination #{name} is not an Exchange or Message class"
             end

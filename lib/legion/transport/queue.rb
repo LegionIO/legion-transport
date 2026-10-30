@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'tenant_topology'
+require_relative 'tenant_migration'
 
 module Legion
   module Transport
@@ -27,7 +28,10 @@ module Legion
           merged[:arguments].delete(:'x-dead-letter-exchange')
         end
         ensure_dlx(merged)
-        super(channel, name, merged)
+        result = super(channel, name, merged)
+        Legion::Transport::TenantMigration.register_queue(tenant_id: @tenant_id, name: @queue_name_arg,
+                                                          options: merged, source_dlx: dlx_name)
+        result
       rescue Legion::Transport::CONNECTOR::PreconditionFailed => e
         handle_exception(e, level: :warn, handled: false, operation: 'transport.queue.initialize', queue: name,
                          detail: 'Declaration failed; existing queue and messages were preserved. Reconcile broker options explicitly.')
@@ -37,12 +41,20 @@ module Legion
 
       def bind(exchange, options = {})
         name = exchange.respond_to?(:name) ? exchange.name : exchange
-        super(Legion::Transport::TenantTopology.exchange_name(name, tenant_id: @tenant_id), options)
+        scoped_name = Legion::Transport::TenantTopology.exchange_name(name, tenant_id: @tenant_id)
+        result = super(scoped_name, options)
+        declaration = channel.exchanges[scoped_name] if channel.respond_to?(:exchanges)
+        Legion::Transport::TenantMigration.register_binding(tenant_id: @tenant_id, name: @queue_name_arg,
+                                                            exchange: declaration || exchange, options: options)
+        result
       end
 
       def unbind(exchange, options = {})
         name = exchange.respond_to?(:name) ? exchange.name : exchange
-        super(Legion::Transport::TenantTopology.exchange_name(name, tenant_id: @tenant_id), options)
+        result = super(Legion::Transport::TenantTopology.exchange_name(name, tenant_id: @tenant_id), options)
+        Legion::Transport::TenantMigration.register_binding(tenant_id: @tenant_id, name: @queue_name_arg,
+                                                            exchange: exchange, options: options, remove: true)
+        result
       end
 
       def default_options

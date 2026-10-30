@@ -177,6 +177,41 @@ RSpec.describe Legion::Transport::Spool, 'historical spool upgrades' do
     expect(described_class.count).to eq(0)
   end
 
+  it 'recovers a Dynamic destination from saved function metadata without rewriting its raw payload' do
+    subscribe_to_upgrade(exchange: 'extension.tasks')
+    extension = double(values: { exchange: 'extension.tasks' })
+    runner = Struct.new(:extension).new(extension)
+    function = Struct.new(:runner).new(runner)
+    functions = Class.new
+    functions.define_singleton_method(:[]) { |id| function if id == 42 }
+    stub_const('Legion::Data::Model::Function', functions)
+    body = { args: { function_id: 42, value: 'original args' }, function: 'perform', encrypt: false }
+    seed_historical(records: [historical_record(exchange: 'Legion::Transport::Messages::Dynamic', payload: body)])
+
+    described_class.replay_async
+    finish_replay
+
+    payload, _properties, delivery = deliveries.pop(timeout: 2)
+    expect(Legion::JSON.load(payload)).to eq(body)
+    expect(delivery.exchange).to eq('extension.tasks')
+    expect(delivery.routing_key).to eq('run')
+    expect(described_class.status).to include(pending: 0, quarantined: 0)
+  end
+
+  it 'scopes a saved literal exchange using the record tenant rather than the replay thread tenant' do
+    Legion::Settings[:transport][:tenant_topology] = { enabled: true }
+    allow(Legion::Transport::TenantTopology).to receive(:current_tenant_id).and_return('other')
+    subscribe_to_upgrade(exchange: 't.alpha.task')
+    seed_historical(records: [historical_record(payload: 'tenant payload', tenant_id: 'alpha')])
+
+    described_class.replay_async
+    finish_replay
+
+    payload, _properties, delivery = deliveries.pop(timeout: 2)
+    expect(payload).to eq('tenant payload')
+    expect(delivery.exchange).to eq('t.alpha.task')
+  end
+
   it 'automatically resumes when an extension exchange class loads after transport startup' do
     subscribe_to_upgrade
     name = 'Legion::Transport::Exchanges::LateSpoolUpgrade'
@@ -236,20 +271,24 @@ RSpec.describe Legion::Transport::Spool, 'historical spool upgrades' do
     expect(described_class.count).to eq(0)
   end
 
-  it 'retains the raw file without publishing when encryption fails and retries after the key recovers' do
+  it 'durably retains failed encryption and resumes automatically after the key recovers' do
     subscribe_to_upgrade
     body = { secret: 'never publish in the clear', encrypt: true }
     seed_historical(records: [historical_record(payload: body)])
     original = pending_bytes
-    allow(crypt).to receive(:encrypt).and_raise(OpenSSL::Cipher::CipherError, 'key unavailable')
+    failures = Queue.new
+    allow(crypt).to receive(:encrypt) do
+      failures << true
+      raise OpenSSL::Cipher::CipherError, 'key unavailable'
+    end
 
     described_class.replay_async
-    finish_replay
+    2.times { expect(failures.pop(timeout: 3)).to be true }
     expect(deliveries).to be_empty
-    expect(pending_bytes).to eq(original)
+    entry = described_class.recovery_entries(status: 'waiting').fetch(0)
+    expect(Base64.strict_decode64(described_class.recovery_record(id: entry[:id])[:raw_line])).to eq(original)
 
     allow(crypt).to receive(:encrypt) { |plaintext| encrypt_payload(plaintext: plaintext) }
-    described_class.replay_async
     finish_replay
     payload, properties = deliveries.pop(timeout: 2)
     expect(properties.content_encoding).to eq('encrypted/cs')
@@ -324,7 +363,8 @@ RSpec.describe Legion::Transport::Spool, 'historical spool upgrades' do
       described_class.replay_async
       2.times { expect(readiness_checks.pop(timeout: 3)).to be true }
       expect(deliveries).to be_empty
-      expect(pending_bytes).to eq(original)
+      entry = described_class.recovery_entries(status: 'waiting').fetch(0)
+      expect(Base64.strict_decode64(described_class.recovery_record(id: entry[:id])[:raw_line])).to eq(original)
       encryption_ready = true
 
       received = deliveries.pop(timeout: 3)
@@ -540,7 +580,7 @@ RSpec.describe Legion::Transport::Spool, 'historical spool upgrades' do
     drainer&.kill&.join(1)
   end
 
-  it 'retains the original lost-destination Direct fallback with a concrete error instead of guessing an exchange' do
+  it 'quarantines the lost-destination Direct fallback with its original bytes instead of guessing an exchange' do
     subscribe_to_upgrade
     seed_historical(records: [historical_record(exchange: 'Legion::Transport::Messages::Direct',
                                                 payload:  { secret: 'destination lost', encrypt: false })])
@@ -555,24 +595,25 @@ RSpec.describe Legion::Transport::Spool, 'historical spool upgrades' do
     finish_replay
 
     expect(deliveries).to be_empty
-    expect(pending_bytes).to eq(original)
+    entry = described_class.recovery_entries(status: 'quarantined').fetch(0)
+    expect(Base64.strict_decode64(described_class.recovery_record(id: entry[:id])[:raw_line])).to eq(original)
     error = errors.pop(timeout: 2)
     expect(error).to be_a(described_class::LegacyRecordError)
     expect(error.message).to match(/exchange|destination/i)
-    expect(described_class.count).to eq(1)
+    expect(described_class.status).to include(pending: 0, quarantined: 1)
   end
 
-  it 'does not publish a valid prefix when a malformed historical tail cannot be migrated' do
+  it 'publishes a valid prefix while retaining a malformed historical tail for repair' do
     subscribe_to_upgrade
     malformed = historical_record(payload: 'missing').except(:payload)
     seed_historical(records: [historical_record(payload: 'valid'), malformed])
-    original = pending_bytes
 
     described_class.replay_async
     finish_replay
 
-    expect(deliveries).to be_empty
-    expect(pending_bytes).to eq(original)
-    expect(described_class.count).to eq(2)
+    expect(deliveries.pop(timeout: 2).first).to eq('valid')
+    entry = described_class.recovery_entries(status: 'quarantined').fetch(0)
+    expect(described_class.recovery_record(id: entry[:id])[:record]).to eq(malformed)
+    expect(described_class.status).to include(pending: 0, quarantined: 1)
   end
 end

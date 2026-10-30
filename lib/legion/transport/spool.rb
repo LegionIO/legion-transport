@@ -6,6 +6,7 @@ require 'legion/logging/helper'
 require 'securerandom'
 require 'time'
 require_relative 'spool/legacy'
+require_relative 'spool/recovery_store'
 
 module Legion
   module Transport
@@ -13,6 +14,7 @@ module Legion
       class CapacityExceededError < StandardError; end
       class LegacyRecordError < StandardError; end
       class LegacyDependencyNotReady < LegacyRecordError; end
+      class UnroutableRecordError < StandardError; end
 
       @mutex = Mutex.new
       @replay_mutex = Mutex.new
@@ -30,6 +32,7 @@ module Legion
             @max_age_seconds = max_age_seconds
             @current_file = nil
             FileUtils.mkdir_p(@directory)
+            @recovery_store = Legion::Transport::Spool::RecoveryStore.new(directory: @directory)
           end
           true
         end
@@ -40,6 +43,7 @@ module Legion
           setup unless @directory
           record = {
             spool_version:    2,
+            record_id:        SecureRandom.hex(16),
             exchange:         exchange,
             exchange_type:    envelope.delete(:exchange_type) || 'topic',
             tenant_id:        envelope.delete(:tenant_id) || 'default',
@@ -72,7 +76,7 @@ module Legion
 
             return false unless drain_claim(claim: claim, &)
           end
-          true
+          drain_recovery(&)
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'transport.spool.drain')
           false
@@ -111,8 +115,58 @@ module Legion
         def count
           setup unless @directory
           with_directory_lock do
-            sorted_files.sum { |file| File.foreach(file).count { |line| !line.strip.empty? } }
+            sorted_files.sum { |file| File.foreach(file).count { |line| !line.strip.empty? } } +
+              @recovery_store.count(status: 'ready') + @recovery_store.count(status: 'waiting')
           end
+        end
+
+        def status
+          setup unless @directory
+          { pending: count, quarantined: @recovery_store.count(status: 'quarantined'),
+            waiting: @recovery_store.count(status: 'waiting'), delivered_recoveries: @recovery_store.count(status: 'delivered') }
+        end
+
+        def recovery_entries(status: nil, limit: 100, offset: 0)
+          setup unless @directory
+          @recovery_store.entries(status: status, limit: limit, offset: offset).map { |entry| recovery_summary(entry: entry) }
+        end
+
+        def recovery_record(id:)
+          setup unless @directory
+          @recovery_store.fetch(id: id)
+        end
+
+        def repair_record(id:, changes:)
+          setup unless @directory
+          validate_repair_changes(changes: changes)
+
+          updated = @recovery_store.update(id: id) do |entry|
+            raise ArgumentError, 'a delivered recovery record cannot be republished by repair' if entry[:status] == 'delivered'
+
+            source = (entry[:wire_record] || entry[:record] || {}).dup
+            if source[:spool_version] == 2 && !source[:recovery]
+              source = repair_wire_record(record: source, changes: changes)
+            else
+              source = source.merge(changes)
+              if changes[:encrypt] == false
+                source[:content_encoding] = 'identity'
+                source[:headers] = (source[:headers] || {}).except(:iv, 'iv')
+              end
+              source[:spooled_at] ||= entry[:recorded_at]
+              source = Legion::Transport::Spool::Legacy.convert(record: source)
+            end
+            source[:record_id] = id
+            entry.merge(status: 'ready', wire_record: source, repaired_at: Time.now.iso8601, error: nil, error_class: nil)
+          end
+          replay_async
+          recovery_summary(entry: updated)
+        end
+
+        def retry_recovery(id:)
+          setup unless @directory
+          updated = prepare_recovery(id: id)
+          replay_async if %w[ready waiting].include?(updated[:status])
+          recovery_summary(entry: updated)
         end
 
         def evict_stale
@@ -135,6 +189,7 @@ module Legion
 
           @mutex.synchronize do
             @directory = nil
+            @recovery_store = nil
             @current_file = nil
             @max_file_bytes = nil
             @max_total_bytes = nil
@@ -172,7 +227,7 @@ module Legion
             @current_file = nil
           end
           files = sorted_files
-          if files.sum { |file| File.size(file) } + bytes > @max_total_bytes || (!reuse && files.size >= @max_files)
+          if files.sum { |file| File.size(file) } + @recovery_store.bytes + bytes > @max_total_bytes || (!reuse && files.size >= @max_files)
             raise CapacityExceededError, 'spool capacity exhausted; pending records were retained'
           end
 
@@ -234,17 +289,29 @@ module Legion
           while (line = io.gets)
             next if line.strip.empty?
 
-            record = Legion::JSON.load(line)
-            unless record.key?(:spool_version)
+            record = parse_spool_record(line: line)
+            if record.nil? || record[:spool_version] != 2 || !valid_record_id?(record: record)
               upgrade_claim(claim: claim, offset: confirmed_offset)
               confirmed_offset = 0
               io = claim.last
               next
             end
-            raise LegacyRecordError, "unsupported spool version: #{record[:spool_version].inspect}" unless record[:spool_version] == 2
-
-            record[:payload] = Base64.strict_decode64(record.fetch(:payload)).force_encoding(record.fetch(:payload_encoding))
-            return false unless yield(record) == true
+            if record[:recovery]
+              retain_recovery(marker: record, line: line)
+            else
+              begin
+                decoded = decoded_wire_record(record: record)
+              rescue ArgumentError, KeyError, TypeError, LegacyRecordError => e
+                retain_recovery(marker: recovery_marker(record: record, line: line, error: e), line: line)
+                confirmed_offset = io.pos
+                next
+              end
+              begin
+                return false unless yield(decoded) == true
+              rescue UnroutableRecordError => e
+                retain_recovery(marker: recovery_marker(record: record, line: line, error: e), line: line)
+              end
+            end
 
             confirmed_offset = io.pos
           end
@@ -269,11 +336,7 @@ module Legion
           original.each_line do |line|
             next if line.strip.empty?
 
-            record = Legion::JSON.load(line)
-            unless record.key?(:spool_version)
-              record = Legion::Transport::Spool::Legacy.convert(record: record)
-              line = "#{Legion::JSON.dump(record)}\n"
-            end
+            line = "#{Legion::JSON.dump(upgraded_record(line: line))}\n"
             raise IOError, 'incomplete spool upgrade write' unless replacement.write(line) == line.bytesize
           end
           replacement.flush
@@ -286,9 +349,6 @@ module Legion
             end
             sync_directory
           end
-        rescue Legion::Transport::EncryptionNotReady, LegacyDependencyNotReady
-          @upgrade_waiting_for_dependency = true
-          raise
         ensure
           original&.close unless original.equal?(claim.last)
           replacement&.close unless replacement.equal?(claim.last)
@@ -319,6 +379,193 @@ module Legion
           File.delete(temporary) if temporary && File.exist?(temporary)
         end
 
+        def parse_spool_record(line:)
+          record = Legion::JSON.load(line)
+          record if record.is_a?(Hash)
+        rescue StandardError => e
+          log.warn "Spool record could not be parsed (#{e.class})"
+          nil
+        end
+
+        def valid_record_id?(record:)
+          record[:record_id].is_a?(String) && record[:record_id].match?(/\A[0-9a-f]{32}\z/)
+        end
+
+        def upgraded_record(line:)
+          record = parse_spool_record(line: line)
+          original = record
+          raise LegacyRecordError, 'spool record is not a valid JSON object' unless record
+          return record if record[:recovery] && valid_record_id?(record: record)
+
+          if record.key?(:spool_version)
+            raise LegacyRecordError, "unsupported spool version: #{record[:spool_version].inspect}" unless record[:spool_version] == 2
+
+            decoded_wire_record(record: record)
+          else
+            record = Legion::Transport::Spool::Legacy.convert(record: record)
+          end
+          record.merge(record_id: valid_record_id?(record: record) ? record[:record_id] : SecureRandom.hex(16))
+        rescue StandardError => e
+          handle_exception(e, level: :warn, handled: true, operation: 'transport.spool.upgrade_record')
+          recovery_marker(record: original, line: line, error: e)
+        end
+
+        def recovery_marker(record:, line:, error:)
+          waiting = error.is_a?(Legion::Transport::EncryptionNotReady) || error.is_a?(LegacyDependencyNotReady) ||
+                    error.is_a?(IOError) || error.class.name.start_with?('OpenSSL::')
+          id = record && valid_record_id?(record: record) ? record[:record_id] : SecureRandom.hex(16)
+          { spool_version: 2, record_id: id,
+            recovery: { status: waiting ? 'waiting' : 'quarantined', record: record,
+                        raw_line: Base64.strict_encode64(line), error_class: error.class.name, error: error.message } }
+        end
+
+        def retain_recovery(marker:, line:)
+          begin
+            detail = marker.fetch(:recovery)
+            unless detail.is_a?(Hash) && %w[waiting quarantined].include?(detail[:status]) &&
+                   (detail[:record].nil? || detail[:record].is_a?(Hash)) &&
+                   detail[:error_class].is_a?(String) && detail[:error].is_a?(String)
+              raise LegacyRecordError, 'invalid spool recovery marker'
+            end
+
+            raw = Base64.strict_decode64(detail.fetch(:raw_line))
+          rescue ArgumentError, KeyError, TypeError, LegacyRecordError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'transport.spool.recovery_marker')
+            detail = recovery_marker(record: marker, line: line, error: e).fetch(:recovery)
+            raw = line
+          end
+          @recovery_store.store(id: marker.fetch(:record_id), record: detail[:record], raw_line: raw,
+                                error: detail.slice(:error_class, :error), status: detail.fetch(:status))
+        end
+
+        def recovery_summary(entry:)
+          record = entry[:wire_record] || entry[:record] || {}
+          envelope = record[:envelope].is_a?(Hash) ? record[:envelope] : {}
+          entry.slice(:id, :status, :error_class, :error, :recorded_at, :repaired_at, :delivered_at).merge(
+            exchange:    record[:exchange] || entry[:exchange],
+            routing_key: envelope[:routing_key] || record[:routing_key] || entry[:routing_key],
+            tenant_id:   record[:tenant_id] || entry[:tenant_id]
+          )
+        end
+
+        def validate_repair_changes(changes:)
+          allowed = %i[exchange routing_key tenant_id exchange_type payload headers encrypt]
+          raise ArgumentError, 'repair changes must be a Hash of supported delivery fields' unless changes.is_a?(Hash) && (changes.keys - allowed).empty?
+          raise ArgumentError, 'repair changes cannot be empty' if changes.empty?
+          raise ArgumentError, 'encrypt must be true or false' if changes.key?(:encrypt) && ![true, false].include?(changes[:encrypt])
+          raise ArgumentError, 'headers must be a Hash' if changes.key?(:headers) && !changes[:headers].is_a?(Hash)
+
+          %i[exchange routing_key exchange_type].each do |key|
+            raise ArgumentError, "#{key} must be a String" unless changes.fetch(key, '').is_a?(String)
+          end
+        end
+
+        def repair_wire_record(record:, changes:)
+          raise ArgumentError, 'changing tenant identity requires an explicit exchange' if changes.key?(:tenant_id) && !changes.key?(:exchange)
+
+          record = record.merge(changes.slice(:exchange, :exchange_type, :tenant_id))
+          record[:exchange] = Legion::Transport::TenantTopology.exchange_name(record[:exchange], tenant_id: record[:tenant_id] || 'default')
+          envelope = record[:envelope].is_a?(Hash) ? record[:envelope].dup : {}
+          envelope.merge!(changes.slice(:routing_key))
+          envelope[:headers] = (envelope[:headers] || {}).merge(changes[:headers].transform_keys(&:to_sym)) if changes.key?(:headers)
+          if envelope[:content_encoding] == 'encrypted/cs' && !changes.key?(:payload)
+            original_iv = record.dig(:envelope, :headers, :iv)
+            raise ArgumentError, 'the IV cannot change without replacing its encrypted payload' unless envelope.dig(:headers, :iv) == original_iv
+          end
+          if changes.key?(:payload) || changes.key?(:encrypt)
+            raise ArgumentError, 'changing wire encryption requires an explicit raw payload' unless changes.key?(:payload)
+
+            return encode_repaired_payload(record: record, envelope: envelope, changes: changes)
+          end
+
+          record = record.merge(envelope: envelope)
+          decoded_wire_record(record: record)
+          record
+        end
+
+        def encode_repaired_payload(record:, envelope:, changes:)
+          legacy = envelope.merge(exchange: record[:exchange], exchange_type: record.fetch(:exchange_type, 'topic'),
+                                  tenant_id: record.fetch(:tenant_id, 'default'), payload: changes.fetch(:payload),
+                                  spooled_at: record.fetch(:spooled_at, Time.now.iso8601))
+          legacy[:encrypt] = changes[:encrypt] if changes.key?(:encrypt)
+          if changes[:encrypt] == false
+            legacy[:content_encoding] = 'identity'
+            legacy[:headers] = (legacy[:headers] || {}).except(:iv, 'iv')
+          end
+          Legion::Transport::Spool::Legacy.convert(record: legacy)
+        end
+
+        def prepare_recovery(id:)
+          @recovery_store.update(id: id) do |entry|
+            next entry if %w[ready delivered].include?(entry[:status])
+
+            raw = if entry[:wire_record]
+                    Legion::JSON.dump(entry[:wire_record])
+                  else
+                    Base64.strict_decode64(entry.fetch(:raw_line))
+                  end
+            record = upgraded_record(line: raw)
+            if record[:recovery]
+              detail = record[:recovery]
+              entry.merge(detail.slice(:status, :error_class, :error))
+            else
+              entry.merge(status: 'ready', wire_record: record.merge(record_id: id), error: nil, error_class: nil)
+            end
+          end
+        end
+
+        def decoded_wire_record(record:)
+          unless record[:exchange].is_a?(String) && record[:exchange_type].is_a?(String) &&
+                 record[:tenant_id].is_a?(String) && record[:envelope].is_a?(Hash) &&
+                 record[:envelope][:routing_key].is_a?(String)
+            raise LegacyRecordError, 'wire record requires exchange, exchange_type, tenant_id and an envelope routing_key'
+          end
+
+          payload = Base64.strict_decode64(record.fetch(:payload)).force_encoding(record.fetch(:payload_encoding))
+          record.merge(payload: payload)
+        end
+
+        def drain_recovery(&)
+          offset = 0
+          loop do
+            entries = @recovery_store.entries(limit: 1000, offset: offset)
+            entries.each do |entry|
+              entry = prepare_recovery(id: entry[:id]) if entry[:status] == 'waiting'
+              next unless entry[:status] == 'ready'
+              return false unless deliver_recovery(id: entry[:id], &)
+            end
+            break if entries.size < 1000
+
+            offset += entries.size
+          end
+          true
+        end
+
+        def deliver_recovery(id:)
+          updated = @recovery_store.update(id: id) do |current|
+            next current unless current[:status] == 'ready'
+
+            record = current.fetch(:wire_record)
+            begin
+              decoded = decoded_wire_record(record: record)
+            rescue ArgumentError, KeyError, TypeError, LegacyRecordError => e
+              handle_exception(e, level: :warn, handled: true, operation: 'transport.spool.recovery_decode')
+              next current.merge(status: 'quarantined', error_class: e.class.name, error: e.message)
+            end
+            if yield(decoded) == true
+              current.merge(status: 'delivered', delivered_at: Time.now.iso8601,
+                            exchange: record[:exchange], routing_key: record.dig(:envelope, :routing_key), tenant_id: record[:tenant_id],
+                            record: nil, raw_line: nil, wire_record: nil)
+            else
+              current
+            end
+          rescue UnroutableRecordError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'transport.spool.recovery_publish')
+            current.merge(status: 'quarantined', error_class: e.class.name, error: e.message)
+          end
+          updated[:status] != 'ready'
+        end
+
         def replay_pending
           loop do
             ready = @replay_mutex.synchronize do
@@ -329,15 +576,15 @@ module Legion
             end
             break unless ready
 
-            @upgrade_waiting_for_dependency = false
             completed = drain { |record| !@replay_stopping && replay_record(record: record) }
+            waiting = @recovery_store.count(status: 'waiting').positive?
             pending = completed && !@replay_stopping && count.positive?
             again = @replay_mutex.synchronize do
-              !@replay_stopping && (pending || @replay_requested || @upgrade_waiting_for_dependency)
+              !@replay_stopping && (pending || @replay_requested || waiting)
             end
             break unless again
 
-            sleep 1 if @upgrade_waiting_for_dependency
+            sleep 1 if waiting
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'transport.spool.replay')
@@ -368,7 +615,15 @@ module Legion
           Legion::Transport::TenantQuota.check_publish(record.fetch(:tenant_id), message_size: payload.bytesize)
           result = Legion::Transport::Publisher.publish(exchange: exchange, payload: payload, envelope: envelope,
                                                         publisher_confirm: true, mandatory: true)
+          if result[:status] == :unroutable || %w[Bunny::NotFound Bunny::PreconditionFailed].include?(result[:error_class])
+            raise UnroutableRecordError, "broker rejected destination: #{result[:error] || result[:return_reply_text] || result[:status]}"
+          end
+
           result[:accepted] == true && result[:status] == :accepted
+        rescue StandardError => e
+          raise unless defined?(::Bunny::NotFound) && (e.is_a?(::Bunny::NotFound) || e.is_a?(::Bunny::PreconditionFailed))
+
+          raise UnroutableRecordError, "Exchange #{record[:exchange]} is unavailable or incompatible (#{e.class})"
         end
       end
     end

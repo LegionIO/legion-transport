@@ -19,6 +19,9 @@
 - Fail closed when requested encryption is not ready, bound encryption attempts, retain cipher/IV metadata in spool replay, and preserve explicit plaintext and bootstrap exceptions. Fixes #46.
 - Automatically upgrade historical raw JSONL spool records to durable wire envelopes before replay; preserve routing, tenant, encryption intent and false/zero metadata, replace stale IVs, and reuse stored ciphertext across interrupted replay. Retry key readiness and late-loaded exchange classes without a manual trigger. Retain original data on failed or interrupted conversion and hold file ownership across atomic replacement.
 - Keep spool claim cleanup safe when shutdown interrupts draining or conversion before the progress offset or original handle is initialized.
+- Complete tenant queue and DLQ data migration with explicit/registered manifests, nonmutating plans, exclusive source locks, tenant-conflict checks, byte-preserving routed confirmation before source acknowledgement, bounded resumable progress, and an authenticated-host HTTP endpoint.
+- Quarantine malformed and missing/unroutable-destination spool records without blocking healthy work. Add durable inspect/repair/retry APIs, stable recovery IDs, per-record cross-process ownership, atomic ready-state persistence, and delivered tombstones that prevent stale journal markers from resurrecting completed repairs.
+- Recover historical Dynamic destinations from saved function metadata, scope literal legacy exchanges by the saved tenant, and retry unavailable encryption/extension metadata independently of healthy records. Preserve ciphertext and IV during destination repair.
 
 ### Changed
 - Direct `Local.subscribe` uses `exchange_name:` for named exchanges; its default is the default exchange, not an unscoped routing-key subscription.

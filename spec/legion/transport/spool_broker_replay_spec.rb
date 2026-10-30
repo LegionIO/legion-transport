@@ -86,4 +86,29 @@ RSpec.describe Legion::Transport::Spool, 'confirmed broker replay', rabbitmq: tr
   ensure
     release << true if release
   end
+
+  it 'quarantines a missing broker exchange without blocking healthy work and repairs its unchanged wire bytes' do
+    topology = broker_channel
+    exchange = topology.topic("legion.spool.#{SecureRandom.uuid}", auto_delete: true)
+    queue = topology.queue('', exclusive: true)
+    queue.bind(exchange, routing_key: 'run')
+    allow(Legion::Transport::Connection).to receive(:channel) { broker_channel }
+    described_class.write(exchange: "missing.#{SecureRandom.uuid}", routing_key: 'run', payload: 'retained-ciphertext',
+                          content_encoding: 'encrypted/cs', headers: { iv: 'retained-iv' })
+    described_class.write(exchange: exchange.name, routing_key: 'run', payload: 'healthy tail')
+
+    described_class.replay_async
+    finish_broker_replay
+    expect(queue.pop.last).to eq('healthy tail')
+    expect(described_class.status).to include(pending: 0, quarantined: 1)
+    id = described_class.recovery_entries.fetch(0).fetch(:id)
+    described_class.repair_record(id: id, changes: { exchange: exchange.name })
+    finish_broker_replay
+
+    _delivery, properties, payload = queue.pop
+    expect(payload).to eq('retained-ciphertext')
+    expect(properties.headers['iv']).to eq('retained-iv')
+    expect(properties.content_encoding).to eq('encrypted/cs')
+    expect(described_class.recovery_record(id: id)[:status]).to eq('delivered')
+  end
 end
