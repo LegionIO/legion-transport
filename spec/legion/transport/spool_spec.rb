@@ -9,88 +9,175 @@ RSpec.describe Legion::Transport::Spool do
 
   before do
     described_class.reset!
-    described_class.setup(directory: spool_dir, max_file_bytes: 1024, max_total_bytes: 4096, max_files: 5,
-                          max_age_seconds: 259_200)
+    described_class.setup(directory: spool_dir)
   end
 
-  after { FileUtils.rm_rf(spool_dir) }
+  after do
+    described_class.reset!
+    FileUtils.rm_rf(spool_dir)
+  end
+
+  def pending_payloads
+    payloads = []
+    described_class.drain do |record|
+      payloads << record[:payload]
+      true
+    end
+    payloads
+  end
 
   describe '.write' do
-    it 'writes a message to a spool file' do
-      described_class.write(exchange: 'task', routing_key: 'test.run', payload: { foo: 'bar' })
-      expect(described_class.count).to eq(1)
+    it 'persists binary wire bytes and returns success only after the append' do
+      payload = "\x00\xFF\x80ciphertext".b
+      expect(described_class.write(exchange: 'task', routing_key: 'run', payload: payload)).to be true
+      expect(pending_payloads).to eq([payload])
     end
 
-    it 'creates JSONL files with .jsonl extension' do
-      described_class.write(exchange: 'task', routing_key: 'test.run', payload: { foo: 'bar' })
-      files = Dir.glob(File.join(spool_dir, '*.jsonl'))
-      expect(files.size).to eq(1)
+    it 'rejects unencoded messages rather than marking a Hash as encrypted wire data' do
+      expect do
+        described_class.write(exchange: 'task', routing_key: 'run', payload: { secret: true },
+                              content_encoding: 'encrypted/cs')
+      end.to raise_error(ArgumentError)
+      expect(described_class.count).to eq(0)
     end
 
-    it 'rotates to new file when max_file_bytes exceeded' do
-      10.times do |i|
-        described_class.write(exchange: 'task', routing_key: 'test.run',
-                              payload: { data: 'x' * 100, index: i })
+    %i[write fsync].each do |operation|
+      it "raises on #{operation} failure without corrupting previously persisted records" do
+        described_class.write(exchange: 'task', routing_key: 'run', payload: 'before')
+        allow(File).to receive(:open).and_wrap_original do |original, path, *args, &block|
+          if path.end_with?('.jsonl') && args.first.is_a?(Integer)
+            original.call(path, *args) do |file|
+              allow(file).to receive(operation).and_raise(Errno::ENOSPC)
+              block.call(file)
+            end
+          else
+            original.call(path, *args, &block)
+          end
+        end
+
+        expect do
+          described_class.write(exchange: 'task', routing_key: 'run', payload: 'failed')
+        end.to raise_error(Errno::ENOSPC)
+        expect(pending_payloads).to eq(['before'])
       end
-      files = Dir.glob(File.join(spool_dir, '*.jsonl'))
-      expect(files.size).to be > 1
-    end
-
-    it 'drops messages when max_files exceeded' do
-      allow(described_class).to receive(:max_file_bytes).and_return(50)
-      100.times do |i|
-        described_class.write(exchange: 'task', routing_key: 'test', payload: { i: i })
-      end
-      files = Dir.glob(File.join(spool_dir, '*.jsonl'))
-      expect(files.size).to be <= 5
     end
   end
 
   describe '.drain' do
-    it 'yields each spooled message in order' do
-      3.times { |i| described_class.write(exchange: 'task', routing_key: "test.#{i}", payload: { i: i }) }
+    it 'retains writes made inside a callback for the next drain' do
+      described_class.write(exchange: 'task', routing_key: 'run', payload: 'first')
+      delivered = []
+      described_class.drain do |record|
+        delivered << record[:payload]
+        described_class.write(exchange: 'task', routing_key: 'run', payload: 'during replay')
+        true
+      end
 
-      messages = []
-      described_class.drain { |msg| messages << msg }
-      expect(messages.size).to eq(3)
-      expect(messages.first[:payload][:i]).to eq(0)
+      expect(delivered).to eq(['first'])
+      expect(pending_payloads).to eq(['during replay'])
     end
 
-    it 'deletes files after successful drain' do
-      described_class.write(exchange: 'task', routing_key: 'test', payload: { a: 1 })
-      described_class.drain { |_msg| true }
-      expect(Dir.glob(File.join(spool_dir, '*.jsonl'))).to be_empty
+    it 'never gives two concurrent drainers the same claimed file' do
+      described_class.write(exchange: 'task', routing_key: 'run', payload: 'once')
+      entered = Queue.new
+      release = Queue.new
+      delivered = Queue.new
+      first = Thread.new do
+        described_class.drain do |record|
+          delivered << record[:payload]
+          entered << true
+          release.pop
+          true
+        end
+      end
+      expect(entered.pop(timeout: 2)).to be true
+      second = Thread.new do
+        described_class.drain do |record|
+          delivered << record[:payload]
+          true
+        end
+      end
+      expect(second.join(2)).to eq(second)
+      expect(delivered.size).to eq(1)
+      release << true
+      expect(first.join(2)).to eq(first)
+      expect(described_class.count).to eq(0)
+    ensure
+      release << true if release
+      first&.kill&.join(1)
+      second&.kill&.join(1)
     end
 
-    it 'keeps files when drain block raises' do
-      described_class.write(exchange: 'task', routing_key: 'test', payload: { a: 1 })
-      described_class.drain { |_msg| raise 'publish failed' } rescue nil # rubocop:disable Style/RescueModifier
-      expect(Dir.glob(File.join(spool_dir, '*.jsonl')).size).to eq(1)
+    it 'allows writers on another thread while a replay callback is waiting' do
+      described_class.write(exchange: 'task', routing_key: 'run', payload: 'first')
+      entered = Queue.new
+      release = Queue.new
+      drainer = Thread.new do
+        described_class.drain do |_record|
+          entered << true
+          release.pop
+          true
+        end
+      end
+      expect(entered.pop(timeout: 2)).to be true
+      writer = Thread.new { described_class.write(exchange: 'task', routing_key: 'run', payload: 'second') }
+      expect(writer.join(2)).to eq(writer)
+      release << true
+      expect(drainer.join(2)).to eq(drainer)
+      expect(pending_payloads).to eq(['second'])
+    ensure
+      release << true if release
+      writer&.kill&.join(1)
+      drainer&.kill&.join(1)
     end
-  end
 
-  describe '.count' do
-    it 'returns total message count across all files' do
-      5.times { |i| described_class.write(exchange: 'task', routing_key: 'test', payload: { i: i }) }
-      expect(described_class.count).to eq(5)
+    it 'removes only a confirmed prefix and retries the unconfirmed record before the remainder' do
+      %w[confirmed unconfirmed unprocessed].each do |payload|
+        described_class.write(exchange: 'task', routing_key: 'run', payload: payload)
+      end
+      expect(described_class.drain { |record| record[:payload] == 'confirmed' }).to be false
+      expect(pending_payloads).to eq(%w[unconfirmed unprocessed])
     end
-  end
 
-  describe '.evict_stale' do
-    it 'removes files older than max_age_seconds' do
-      described_class.write(exchange: 'task', routing_key: 'test', payload: { old: true })
-      files = Dir.glob(File.join(spool_dir, '*.jsonl'))
-      FileUtils.touch(files.first, mtime: Time.now - 300_000)
-      described_class.evict_stale
-      expect(Dir.glob(File.join(spool_dir, '*.jsonl'))).to be_empty
+    it 'does not treat a truthy publication result as a confirmation' do
+      described_class.write(exchange: 'task', routing_key: 'run', payload: 'pending')
+      expect(described_class.drain { { accepted: false } }).to be false
+      expect(pending_payloads).to eq(['pending'])
     end
-  end
 
-  describe '.reset!' do
-    it 'clears internal state' do
-      described_class.write(exchange: 'task', routing_key: 'test', payload: { a: 1 })
-      described_class.reset!
-      expect { described_class.write(exchange: 'task', routing_key: 'test', payload: { a: 1 }) }.not_to raise_error
+    it 'retains the failing record when the callback raises' do
+      %w[confirmed failed].each do |payload|
+        described_class.write(exchange: 'task', routing_key: 'run', payload: payload)
+      end
+      described_class.drain do |record|
+        raise IOError, 'connection lost' if record[:payload] == 'failed'
+
+        true
+      end
+      expect(pending_payloads).to eq(['failed'])
+    end
+
+    it 'releases an interrupted claim without discarding unconfirmed or unprocessed records' do
+      %w[confirmed interrupted unprocessed].each do |payload|
+        described_class.write(exchange: 'task', routing_key: 'run', payload: payload)
+      end
+      entered = Queue.new
+      blocked = Queue.new
+      drainer = Thread.new do
+        described_class.drain do |record|
+          if record[:payload] == 'interrupted'
+            entered << true
+            blocked.pop
+          end
+          true
+        end
+      end
+      expect(entered.pop(timeout: 2)).to be true
+      drainer.kill
+      expect(drainer.join(2)).to eq(drainer)
+      expect(pending_payloads).to eq(%w[interrupted unprocessed])
+    ensure
+      drainer&.kill&.join(1)
     end
   end
 end

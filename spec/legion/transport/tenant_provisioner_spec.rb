@@ -4,143 +4,106 @@ require 'spec_helper'
 require 'legion/transport/tenant_provisioner'
 
 RSpec.describe Legion::Transport::TenantProvisioner do
-  let(:channel) { instance_double('Bunny::Channel') }
+  let(:channel) do
+    instance_double('Bunny::Channel', topic: nil,
+                                      exchange_declare_without_recording_topology: nil,
+                                      queue_declare_without_recording_topology: nil, queue_bind: nil,
+                                      exchange_delete: nil, close: nil)
+  end
+
+  before do
+    @previous_topology = Legion::Settings[:transport][:tenant_topology]
+    Legion::Settings[:transport][:tenant_topology] = { enabled: true }
+  end
+
+  after do
+    Legion::Settings[:transport][:tenant_topology] = @previous_topology
+    Legion::Transport::Exchange.clear_cache
+  end
 
   describe '.provision' do
-    context 'when tenant_topology is disabled (default)' do
-      before do
-        Legion::Settings[:transport][:tenant_topology] ||= {}
-        Legion::Settings[:transport][:tenant_topology][:enabled] = false
-        allow(channel).to receive(:topic)
-        allow(channel).to receive(:fanout)
-      end
+    it 'provisions the same exchange and DLX used by built-in task producers and consumers', :rabbitmq do
+      allow(channel).to receive(:register_exchange)
+      allow(channel).to receive(:record_exchange)
+      allow(channel).to receive(:register_queue)
+      allow(channel).to receive(:record_queue)
+      producer = Legion::Transport::Exchanges::Task.new(nil, tenant_id: 'alpha', channel: channel, no_declare: true)
+      consumer = Legion::Transport::Queues::TaskUpdate.new(nil, tenant_id: 'alpha', channel: channel, no_declare: true)
 
-      it 'creates exchanges with un-prefixed names' do
-        expect(channel).to receive(:topic).with('tasks', durable: true)
-        expect(channel).to receive(:topic).with('results', durable: true)
-        expect(channel).to receive(:topic).with('events', durable: true)
-        expect(channel).to receive(:fanout).with('dlx', durable: true)
-        described_class.provision('abc123', channel: channel)
-      end
+      described_class.provision('alpha', channel: channel)
+
+      expect(channel).to have_received(:topic).with(producer.name, durable: true, auto_delete: false)
+      expect(producer.name).to eq('t.alpha.task')
+      expect(consumer.name).to eq('t.alpha.task.update')
+      dlx = consumer.options[:arguments][:'x-dead-letter-exchange']
+      expect(dlx).to eq('t.alpha.task.dlx')
+      expect(channel).to have_received(:exchange_declare_without_recording_topology)
+        .with(dlx, 'fanout', durable: true, auto_delete: false)
+      expect(channel).to have_received(:queue_bind).with("#{dlx}.queue", dlx, routing_key: '#')
     end
 
-    context 'when tenant_topology is enabled' do
-      before do
-        Legion::Settings[:transport][:tenant_topology] ||= {}
-        Legion::Settings[:transport][:tenant_topology][:enabled] = true
-        allow(channel).to receive(:topic)
-        allow(channel).to receive(:fanout)
+    it 'provisions scoped task, results and events exchanges rather than an unused plural tasks exchange' do
+      described_class.provision('alpha', channel: channel)
+      %w[task results events].each do |name|
+        expect(channel).to have_received(:topic).with("t.alpha.#{name}", durable: true, auto_delete: false)
+        expect(channel).to have_received(:queue_bind).with("t.alpha.#{name}.dlx.queue", "t.alpha.#{name}.dlx", routing_key: '#')
       end
-
-      after do
-        Legion::Settings[:transport][:tenant_topology][:enabled] = false
-      end
-
-      it 'creates topic exchanges with tenant prefix' do
-        expect(channel).to receive(:topic).with('t.abc123.tasks', durable: true)
-        expect(channel).to receive(:topic).with('t.abc123.results', durable: true)
-        expect(channel).to receive(:topic).with('t.abc123.events', durable: true)
-        expect(channel).to receive(:fanout).with('t.abc123.dlx', durable: true)
-        described_class.provision('abc123', channel: channel)
-      end
-
-      it 'does not close the channel when channel is provided' do
-        expect(channel).not_to receive(:close)
-        described_class.provision('abc123', channel: channel)
-      end
+      expect(channel).not_to have_received(:topic).with('t.alpha.tasks', anything)
     end
 
-    context 'channel leak prevention' do
-      before do
-        Legion::Settings[:transport][:tenant_topology] ||= {}
-        Legion::Settings[:transport][:tenant_topology][:enabled] = true
-      end
+    it 'retains unprefixed resources when disabled or using the default tenant' do
+      Legion::Settings[:transport][:tenant_topology][:enabled] = false
+      described_class.provision('alpha', channel: channel)
+      Legion::Settings[:transport][:tenant_topology][:enabled] = true
+      described_class.provision('default', channel: channel)
+      expect(channel).to have_received(:topic).with('task', durable: true, auto_delete: false).twice
+      expect(channel).to have_received(:queue_bind).with('task.dlx.queue', 'task.dlx', routing_key: '#').twice
+    end
 
-      after do
-        Legion::Settings[:transport][:tenant_topology][:enabled] = false
-      end
+    it 'does not close a caller-owned channel' do
+      expect(channel).not_to receive(:close)
+      described_class.provision('alpha', channel: channel)
+    end
 
-      it 'closes an internally-acquired channel even when provision raises' do
-        owned_channel = instance_double('Bunny::Channel')
-        allow(owned_channel).to receive(:topic).and_raise(StandardError, 'boom')
-        allow(owned_channel).to receive(:fanout)
-        allow(owned_channel).to receive(:respond_to?).with(:close).and_return(true)
-        allow(owned_channel).to receive(:close)
-
-        allow(Legion::Transport::Connection).to receive(:channel).and_return(owned_channel)
-
-        expect(owned_channel).to receive(:close)
-        expect { described_class.provision('abc123') }.to raise_error(StandardError, 'boom')
-      end
+    it 'preserves the provisioning error even if owned channel cleanup fails' do
+      primary = IOError.new('provision failed')
+      cleanup = IOError.new('close failed')
+      allow(Legion::Transport::Connection).to receive(:channel).and_return(channel)
+      allow(channel).to receive(:topic).and_raise(primary)
+      allow(channel).to receive(:close).and_raise(cleanup)
+      expect(described_class).to receive(:handle_exception).with(cleanup, hash_including(handled: true))
+      expect(described_class).to receive(:handle_exception).with(primary, hash_including(handled: false))
+      expect { described_class.provision('alpha') }.to(raise_error { |error| expect(error).to equal(primary) })
     end
   end
 
   describe '.deprovision' do
-    context 'when tenant_topology is disabled' do
-      before do
-        Legion::Settings[:transport][:tenant_topology] ||= {}
-        Legion::Settings[:transport][:tenant_topology][:enabled] = false
-      end
-
-      it 'skips deprovision and does not raise' do
-        expect { described_class.deprovision('abc123', channel: channel) }.not_to raise_error
-      end
-
-      it 'does not attempt to delete any exchanges' do
-        expect(channel).not_to receive(:exchange_delete)
-        described_class.deprovision('abc123', channel: channel)
+    it 'only deletes tenant-prefixed exchanges, preserving old global names and all queued data' do
+      expect(channel).not_to receive(:queue_delete)
+      described_class.deprovision('alpha', channel: channel)
+      %w[task results events].each do |name|
+        expect(channel).to have_received(:exchange_delete).with("t.alpha.#{name}")
+        expect(channel).to have_received(:exchange_delete).with("t.alpha.#{name}.dlx")
+        expect(channel).not_to have_received(:exchange_delete).with(name)
       end
     end
 
-    context 'when tenant_topology is enabled' do
-      before do
-        Legion::Settings[:transport][:tenant_topology] ||= {}
-        Legion::Settings[:transport][:tenant_topology][:enabled] = true
-        allow(channel).to receive(:exchange_delete)
-      end
-
-      after do
-        Legion::Settings[:transport][:tenant_topology][:enabled] = false
-      end
-
-      it 'deletes all tenant-prefixed exchanges' do
-        expect(channel).to receive(:exchange_delete).with('t.abc123.tasks')
-        expect(channel).to receive(:exchange_delete).with('t.abc123.results')
-        expect(channel).to receive(:exchange_delete).with('t.abc123.events')
-        expect(channel).to receive(:exchange_delete).with('t.abc123.dlx')
-        described_class.deprovision('abc123', channel: channel)
-      end
-
-      it 'does not raise when exchange_delete fails' do
-        allow(channel).to receive(:exchange_delete).and_raise(StandardError, 'not found')
-        expect { described_class.deprovision('abc123', channel: channel) }.not_to raise_error
-      end
-
-      it 'does not close the channel when channel is provided' do
-        expect(channel).not_to receive(:close)
-        described_class.deprovision('abc123', channel: channel)
-      end
-
-      it 'skips deprovision when tenant_id is nil' do
-        expect(channel).not_to receive(:exchange_delete)
-        described_class.deprovision(nil, channel: channel)
-      end
-
-      it 'skips deprovision when tenant_id is blank' do
-        expect(channel).not_to receive(:exchange_delete)
-        described_class.deprovision('', channel: channel)
-      end
-
-      it 'skips deprovision when tenant_id is "default"' do
-        expect(channel).not_to receive(:exchange_delete)
-        described_class.deprovision('default', channel: channel)
-      end
+    it 'never deletes configured shared exchanges or their shared DLX' do
+      Legion::Settings[:transport][:tenant_topology][:shared_exchanges] = ['task']
+      expect(channel).not_to receive(:exchange_delete).with('task')
+      expect(channel).not_to receive(:exchange_delete).with('task.dlx')
+      described_class.deprovision('alpha', channel: channel)
     end
-  end
 
-  describe 'EXCHANGE_TYPES constant' do
-    it 'includes tasks, results, and events' do
-      expect(described_class::EXCHANGE_TYPES).to contain_exactly('tasks', 'results', 'events')
+    it 'refuses global resource deletion for missing, blank or default tenants' do
+      expect(channel).not_to receive(:exchange_delete)
+      [nil, '', 'default'].each { |tenant| described_class.deprovision(tenant, channel: channel) }
+    end
+
+    it 'does not delete anything when tenant topology is disabled' do
+      Legion::Settings[:transport][:tenant_topology][:enabled] = false
+      expect(channel).not_to receive(:exchange_delete)
+      described_class.deprovision('alpha', channel: channel)
     end
   end
 end

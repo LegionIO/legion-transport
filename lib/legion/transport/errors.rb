@@ -8,5 +8,6 @@ module Legion
     class PoolClosed < StandardError; end
     class ClusterUnavailable < StandardError; end
     class PayloadTooLarge < StandardError; end
+    class EncryptionNotReady < StandardError; end
   end
 end

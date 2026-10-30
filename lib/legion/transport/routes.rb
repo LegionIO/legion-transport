@@ -141,9 +141,23 @@ module Legion
           message = Legion::Transport::Messages::Direct.new(
             exchange: body[:exchange], routing_key: body[:routing_key], **(body[:payload] || {})
           )
-          message.publish
-          log.info "API: published message to exchange=#{body[:exchange]} routing_key=#{body[:routing_key]}"
-          json_response({ published: true, exchange: body[:exchange], routing_key: body[:routing_key] }, status_code: 201)
+          result = message.publish(return_result: true, publisher_confirm: true, mandatory: true)
+          raise IOError, 'publisher returned no delivery result' unless result.is_a?(Hash)
+
+          published = result[:status] == :accepted && result[:accepted] == true
+          status_code = if published
+                          201
+                        else
+                          case result[:status]
+                          when :spooled then 202
+                          when :unroutable then 422
+                          when :confirm_timeout then 504
+                          else 503
+                          end
+                        end
+          log.info "API: transport publish status=#{result[:status]} exchange=#{body[:exchange]} routing_key=#{body[:routing_key]}"
+          json_response(result.merge(published: published, exchange: body[:exchange], routing_key: body[:routing_key]),
+                        status_code: status_code)
         rescue StandardError => e
           handle_exception(e, level: :error, handled: true, operation: :transport_publish)
           json_error('publish_error', e.message, status_code: 500)

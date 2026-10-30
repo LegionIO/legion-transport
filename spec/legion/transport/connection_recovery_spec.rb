@@ -153,6 +153,43 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       worker&.kill&.join
     end
 
+    it 'does not inject an intentional socket-close failure into the session owner' do
+      finish = Queue.new
+      read_released = Queue.new
+      reading = Queue.new
+      owner = Thread.new { finish.pop }
+      owner.report_on_exception = false
+      reader = Thread.new do
+        reading << true
+        read_released.pop
+        owner.raise(Bunny::NetworkFailure, 'socket closed during read')
+      end
+      Timeout.timeout(2) { reading.pop }
+      socket = StringIO.new
+      socket.define_singleton_method(:close) do
+        read_released << true
+        reader.join(0.1)
+        super()
+      end
+      reader_loop = Object.new
+      reader_loop.instance_variable_set(:@thread, reader)
+      session = instance_double(Bunny::Session, close: nil)
+      session.instance_variable_set(:@reader_loop, reader_loop)
+      session.instance_variable_set(:@transport, socket)
+      connection.instance_variable_set(:@session, Concurrent::AtomicReference.new(session))
+
+      connection.shutdown
+      finish << :finished
+
+      expect(Timeout.timeout(2) { owner.value }).to eq(:finished)
+      expect(socket).to be_closed
+    ensure
+      finish&.<< :finished
+      reader&.kill&.join
+      owner&.kill
+      owner.join if owner&.alive?
+    end
+
     it 'closes a channel created concurrently with shutdown instead of registering it' do
       entered = Queue.new
       release = Queue.new

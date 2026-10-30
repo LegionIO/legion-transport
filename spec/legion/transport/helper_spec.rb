@@ -109,96 +109,94 @@ RSpec.describe Legion::Transport::Helper do
   end
 
   describe '#transport_publish' do
-    let(:exchange_instance) { instance_double(Legion::Transport::Exchange) }
-    let(:exchange_class) { class_double(Legion::Transport::Exchange, new: exchange_instance, cached_instance: exchange_instance) }
+    let(:channel) do
+      instance_double(Bunny::Channel, register_exchange: nil, record_exchange: nil,
+                                      using_publisher_confirmations?: false, confirm_select: true, wait_for_confirms: true)
+    end
+    let(:exchange_instance) { Bunny::Exchange.new(channel, :topic, 'events', no_declare: true) }
+    let(:exchange_class) do
+      class_double(Legion::Transport::Exchange, new: exchange_instance, cached_instance: exchange_instance,
+                                               declaration: { name: 'events', type: 'topic' })
+    end
+    let(:published) { [] }
 
     before do
       allow(subject).to receive(:transport_connected?).and_return(true)
       allow(subject).to receive(:default_exchange).and_return(exchange_class)
-      allow(exchange_instance).to receive(:publish)
+      allow(Legion::Settings).to receive(:dig).and_call_original
+      allow(Legion::Settings).to receive(:dig).with(:transport, :messages, :persistent).and_return(true)
+      allow(channel).to receive(:basic_publish) do |payload, exchange, routing_key, envelope|
+        published << { payload: payload, exchange: exchange, routing_key: routing_key, envelope: envelope }
+      end
     end
 
-    it 'publishes JSON-encoded payload to the default exchange' do
-      expect(exchange_instance).to receive(:publish).with(
-        '{"foo":"bar"}',
-        routing_key: 'test.run'
-      )
+    it 'publishes JSON objects and leaves already encoded strings unchanged' do
       expect(subject.transport_publish(routing_key: 'test.run', payload: { foo: 'bar' })).to be true
+      expect(subject.transport_publish(routing_key: 'test.run', payload: 'raw-string')).to be true
+
+      expect(published.map { |entry| entry[:payload] }).to eq(['{"foo":"bar"}', 'raw-string'])
+      expect(published.map { |entry| entry[:exchange] }).to eq(%w[events events])
     end
 
-    it 'passes through string payloads without re-encoding' do
-      expect(exchange_instance).to receive(:publish).with(
-        'raw-string',
-        routing_key: 'test.run'
-      )
-      subject.transport_publish(routing_key: 'test.run', payload: 'raw-string')
+    it 'uses configured persistence while preserving an explicit false override' do
+      subject.transport_publish(routing_key: 'test.run')
+      subject.transport_publish(routing_key: 'test.run', persistent: false)
+      allow(Legion::Settings).to receive(:dig).with(:transport, :messages, :persistent).and_return(false)
+      subject.transport_publish(routing_key: 'test.run')
+
+      expect(published.map { |entry| entry[:envelope][:persistent] }).to eq([true, false, false])
     end
 
-    it 'applies explicit TTL as expiration string' do
-      expect(exchange_instance).to receive(:publish).with(
-        '{}',
-        routing_key: 'test.run',
-        expiration:  '60000'
-      )
+    it 'applies explicit TTL ahead of the helper default' do
+      allow(subject).to receive(:transport_default_ttl).and_return(30_000)
       subject.transport_publish(routing_key: 'test.run', ttl: 60_000)
+
+      expect(published.fetch(0)[:envelope][:expiration]).to eq('60000')
     end
 
-    it 'applies transport_default_ttl when no explicit TTL' do
+    it 'applies the helper default only when expiration and TTL were omitted' do
       allow(subject).to receive(:transport_default_ttl).and_return(30_000)
-      expect(exchange_instance).to receive(:publish).with(
-        '{}',
-        routing_key: 'test.run',
-        expiration:  '30000'
-      )
       subject.transport_publish(routing_key: 'test.run')
-    end
-
-    it 'omits expiration when TTL is nil' do
-      allow(subject).to receive(:transport_default_ttl).and_return(nil)
-      expect(exchange_instance).to receive(:publish).with(
-        '{}',
-        routing_key: 'test.run'
-      )
-      subject.transport_publish(routing_key: 'test.run')
-    end
-
-    it 'returns false when transport is not connected' do
-      allow(subject).to receive(:transport_connected?).and_return(false)
-      expect(subject.transport_publish(routing_key: 'test.run')).to be false
-    end
-
-    it 'returns false when publish raises' do
-      allow(exchange_instance).to receive(:publish).and_raise(StandardError, 'connection closed')
-      expect(subject.transport_publish(routing_key: 'test.run')).to be false
-    end
-
-    it 'treats explicit ttl: nil as no expiration (does not fall back to default TTL)' do
-      allow(subject).to receive(:transport_default_ttl).and_return(30_000)
-      expect(exchange_instance).to receive(:publish).with(
-        '{}',
-        routing_key: 'test.run'
-      )
       subject.transport_publish(routing_key: 'test.run', ttl: nil)
-    end
-
-    it 'passes through an explicit expiration: without overwriting it' do
-      allow(subject).to receive(:transport_default_ttl).and_return(30_000)
-      expect(exchange_instance).to receive(:publish).with(
-        '{}',
-        routing_key: 'test.run',
-        expiration:  '99999'
-      )
       subject.transport_publish(routing_key: 'test.run', expiration: '99999')
+
+      expect(published.map { |entry| entry[:envelope][:expiration] }).to eq(['30000', nil, '99999'])
     end
 
-    it 'forwards extra options to exchange publish' do
-      expect(exchange_instance).to receive(:publish).with(
-        '{}',
-        routing_key: 'test.run',
-        persistent:  true,
-        priority:    5
-      )
-      subject.transport_publish(routing_key: 'test.run', persistent: true, priority: 5)
+    it 'returns false when transport is disconnected without sending anything' do
+      allow(subject).to receive(:transport_connected?).and_return(false)
+
+      expect(subject.transport_publish(routing_key: 'test.run')).to be false
+      expect(published).to eq([])
+    end
+
+    it 'returns false when publication fails' do
+      allow(channel).to receive(:basic_publish).and_raise(IOError, 'connection closed')
+
+      expect(subject.transport_publish(routing_key: 'test.run')).to be false
+    end
+
+    it 'returns the reliable broker result instead of unconditionally returning true' do
+      allow(channel).to receive(:wait_for_confirms).and_return(false)
+
+      expect(subject.transport_publish(routing_key: 'test.run', publisher_confirm: true)).to include(status: :nacked, accepted: false)
+    end
+
+    it 'returns structured failures when a reliable publish is requested while disconnected' do
+      allow(subject).to receive(:transport_connected?).and_return(false)
+
+      expect(subject.transport_publish(routing_key: 'test.run', return_result: true)).to include(status: :failed, accepted: false)
+    end
+
+    it 'fails closed when encryption was explicitly requested before readiness' do
+      stub_const('Legion::Crypt', Module.new)
+      allow(Legion::Crypt).to receive(:encrypt)
+      allow(Legion::Settings).to receive(:dig).with(:crypt, :cs_encrypt_ready).and_return(false)
+
+      result = subject.transport_publish(routing_key: 'test.run', encrypt: true, return_result: true)
+
+      expect(result).to include(status: :failed, accepted: false, error_class: 'Legion::Transport::EncryptionNotReady')
+      expect(published).to eq([])
     end
   end
 

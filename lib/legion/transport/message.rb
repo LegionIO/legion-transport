@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'publisher'
+require_relative 'tenant_quota'
 
 module Legion
   module Transport
@@ -28,120 +30,61 @@ module Legion
       def publish(options = nil)
         raise unless @valid
 
-        publish_options = options ? @options.merge(options) : @options
-        validate_payload_size
-        ex_class = exchange
-        exchange_dest = if ex_class.respond_to?(:cached_instance)
-                          ex_class.cached_instance || ex_class.new
-                        elsif ex_class.respond_to?(:new)
-                          ex_class.new
-                        else
-                          ex_class
-                        end
-        return_state = {}
-        install_return_listener(exchange_dest, publish_options, return_state)
-        prepare_publisher_confirms(exchange_dest, publish_options)
-        exchange_dest.publish(encode_message,
-                              **publish_envelope_options(publish_options))
-        result = publish_result(exchange_dest, publish_options, return_state)
-        return result if return_publish_result?(publish_options)
+        original_options = @options
+        @options = @options.merge(options) if options
+        payload = encode_message
+        validate_payload_size(payload: payload)
+        destination, declaration, tenant_id = resolve_publish_destination
+        envelope = publish_envelope_options(@options)
+        if destination.is_a?(Class)
+          destination = destination.cached_instance(name: declaration[:name], tenant_id: tenant_id) ||
+                        destination.new(declaration[:name], tenant_id: tenant_id)
+        end
+        Legion::Transport::TenantQuota.check_publish(tenant_id, message_size: payload.bytesize)
+        quota_checked = true
+        result = Legion::Transport::Publisher.publish(
+          exchange: destination, payload: payload, envelope: envelope,
+          publisher_confirm: @options[:publisher_confirm] == true, mandatory: @options[:mandatory] == true,
+          confirm_timeout_ms: @options.fetch(:publish_confirm_timeout_ms, 5000)
+        )
+        if result[:status] == :failed
+          return spool_publish_result(result: result, payload: payload, envelope: envelope, declaration: declaration, tenant_id: tenant_id)
+        end
+        return result if return_publish_result?(@options) || !result[:accepted]
 
         nil
       rescue Bunny::ConnectionClosedError, Bunny::ChannelAlreadyClosed, Bunny::ChannelError,
              Bunny::NetworkErrorWrapper, IOError, Timeout::Error => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.message.publish',
-                         spooled: spool_enabled?(publish_options))
-        spool_message(e, publish_options) if spool_enabled?(publish_options)
-        publish_failure_result(spool_enabled?(publish_options) ? :spooled : :failed, e, publish_options)
+        handle_exception(e, level: :warn, handled: true, operation: 'transport.message.publish')
+        result = publish_failure_result(:failed, e)
+        return result unless payload && envelope && declaration
+
+        Legion::Transport::TenantQuota.check_publish(tenant_id, message_size: payload.bytesize) unless quota_checked
+        spool_publish_result(result: result, payload: payload, envelope: envelope, declaration: declaration, tenant_id: tenant_id)
+      ensure
+        @options = original_options if original_options
+      end
+
+      def publish_exchange_name
+        @options[:exchange] if @options[:exchange].is_a?(String)
       end
 
       def publish_envelope_options(options)
         {
           routing_key:      options[:routing_key] || routing_key || '',
           content_type:     options[:content_type] || content_type,
-          content_encoding: options[:content_encoding] || content_encoding,
+          content_encoding: @options[:content_encoding] || content_encoding,
           type:             options[:type] || type,
           priority:         options[:priority] || priority,
           expiration:       options[:expiration] || expiration,
           headers:          headers,
-          persistent:       options.key?(:persistent) ? options[:persistent] : persistent,
-          message_id:       message_id,
-          correlation_id:   correlation_id,
-          reply_to:         reply_to,
-          app_id:           app_id,
-          timestamp:        timestamp
+          persistent:       options.key?(:persistent) ? options[:persistent] : persistent
         }.tap do |envelope|
+          %i[message_id correlation_id reply_to app_id timestamp].each do |key|
+            envelope[key] = options[key] || public_send(key)
+          end
           envelope[:mandatory] = true if options[:mandatory] == true
-        end
-      end
-
-      def publish_result(exchange_dest, options, return_state)
-        confirmed_status = confirm_publish(exchange_dest, options)
-        status = return_state[:returned] ? :unroutable : confirmed_status
-        ex_name = exchange_dest.respond_to?(:name) ? exchange_dest.name : exchange_dest.to_s
-        log.debug "Published to exchange=#{ex_name} routing_key=#{options[:routing_key] || routing_key || ''} class=#{self.class.name}"
-        {
-          status:            status,
-          accepted:          status == :accepted,
-          exchange:          ex_name,
-          routing_key:       options[:routing_key] || routing_key || '',
-          message_id:        message_id,
-          return_reply_code: return_state[:reply_code],
-          return_reply_text: return_state[:reply_text],
-          correlation_id:    correlation_id
-        }.compact
-      end
-
-      def prepare_publisher_confirms(exchange_dest, options)
-        return unless options[:publisher_confirm] == true
-
-        confirm_channel = publish_channel(exchange_dest)
-        return unless confirm_channel.respond_to?(:confirm_select)
-
-        confirm_channel.confirm_select
-      end
-
-      def confirm_publish(exchange_dest, options)
-        return :accepted unless options[:publisher_confirm] == true
-
-        confirm_channel = publish_channel(exchange_dest)
-        return :accepted unless confirm_channel.respond_to?(:wait_for_confirms)
-
-        timeout = options[:publish_confirm_timeout_ms]
-        confirmed = if timeout
-                      confirm_channel.wait_for_confirms(timeout.to_f / 1000.0)
-                    else
-                      confirm_channel.wait_for_confirms
-                    end
-        confirmed == false ? :nacked : :accepted
-      rescue Timeout::Error => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.message.confirm_publish')
-        :confirm_timeout
-      end
-
-      def publish_channel(exchange_dest)
-        return exchange_dest.channel if exchange_dest.respond_to?(:channel)
-
-        channel
-      end
-
-      def install_return_listener(exchange_dest, options, return_state)
-        return unless options[:mandatory] == true
-
-        return_channel = publish_channel(exchange_dest)
-        return unless return_channel.respond_to?(:on_return)
-
-        expected_correlation_id = correlation_id
-        expected_message_id = message_id
-        return_channel.on_return do |return_info, properties, _content|
-          next if properties.respond_to?(:correlation_id) && properties.correlation_id &&
-                  expected_correlation_id && properties.correlation_id != expected_correlation_id
-          next if properties.respond_to?(:message_id) && properties.message_id &&
-                  expected_message_id && properties.message_id != expected_message_id
-
-          return_state[:returned] = true
-          return_state[:reply_code] = return_info.reply_code if return_info.respond_to?(:reply_code)
-          return_state[:reply_text] = return_info.reply_text if return_info.respond_to?(:reply_text)
+          %i[user_id delivery_mode cluster_id].each { |key| envelope[key] = options[key] if options.key?(key) }
         end
       end
 
@@ -190,7 +133,7 @@ module Legion
       end
 
       def persistent
-        @options[:persistent] || Legion::Transport.settings[:messages][:persistent]
+        @options.fetch(:persistent) { Legion::Transport.settings[:messages][:persistent] }
       end
 
       def expiration
@@ -205,11 +148,15 @@ module Legion
         end
       end
 
+      PUBLISH_OPTION_KEYS = %i[
+        tenant_id encrypt publisher_confirm mandatory publish_confirm_timeout_ms return_result spool
+      ].freeze
+
       ENVELOPE_KEYS = %i[
         headers content_type content_encoding persistent expiration
-        priority app_id user_id reply_to correlation_id message_id
-        routing_key exchange type
-      ].freeze
+        priority app_id user_id reply_to correlation_id message_id delivery_mode cluster_id
+        routing_key exchange type timestamp ttl
+      ].concat(PUBLISH_OPTION_KEYS).freeze
 
       def message
         @options.except(*ENVELOPE_KEYS)
@@ -224,7 +171,7 @@ module Legion
         message_payload = Legion::JSON.dump(message_payload) unless message_payload.is_a? String
 
         if encrypt?
-          encrypted = Legion::Crypt.encrypt(message_payload)
+          encrypted = encrypt_message(message_payload)
           headers[:iv] = encrypted[:iv]
           @options[:content_encoding] = 'encrypted/cs'
           log.debug "Message encrypted with content_encoding=encrypted/cs class=#{self.class.name}"
@@ -237,16 +184,20 @@ module Legion
       end
 
       def encrypt_message(message, _type = 'cs')
-        Legion::Crypt.encrypt(message)
+        unless defined?(Legion::Crypt) && Legion::Crypt.respond_to?(:encrypt) && Legion::Settings.dig(:crypt, :cs_encrypt_ready) == true
+          raise Legion::Transport::EncryptionNotReady, 'Message encryption requires a ready cluster secret'
+        end
+
+        timeout = Legion::Settings.dig(:crypt, :cluster_secret_timeout) || 5
+        unless timeout.is_a?(Numeric) && timeout.finite? && timeout.positive?
+          raise Legion::Transport::EncryptionNotReady, 'Cluster secret readiness timeout must be finite and positive'
+        end
+
+        Timeout.timeout(timeout, Legion::Transport::EncryptionNotReady, 'Cluster secret encryption timed out') { Legion::Crypt.encrypt(message) }
       end
 
       def encrypt?
-        should_encrypt = if @options.key?(:encrypt)
-                           @options[:encrypt]
-                         else
-                           Legion::Settings[:transport][:messages][:encrypt]
-                         end
-        should_encrypt && Legion::Settings[:crypt][:cs_encrypt_ready]
+        @options.key?(:encrypt) ? @options[:encrypt] : Legion::Settings[:transport][:messages][:encrypt]
       end
 
       def exchange_name
@@ -313,9 +264,20 @@ module Legion
 
       private
 
-      def validate_payload_size
+      def resolve_publish_destination
+        tenant_id = Legion::Transport::TenantTopology.resolve_tenant_id(tenant_id: @options[:tenant_id])
+        destination = exchange
+        tenant_id = destination.tenant_id if !@options.key?(:tenant_id) && destination.respond_to?(:tenant_id)
+        declaration = if destination.is_a?(Class)
+                        destination.declaration(name: publish_exchange_name, tenant_id: tenant_id)
+                      else
+                        { name: destination.name, type: destination.type }
+                      end
+        [destination, declaration, tenant_id]
+      end
+
+      def validate_payload_size(payload:)
         limit = self.class.max_payload_bytes
-        payload = Legion::JSON.dump(message)
         size = payload.bytesize
         return if size <= limit
 
@@ -386,30 +348,20 @@ module Legion
                                                 default_affinity
       end
 
-      def spool_message(error, options = @options)
-        return unless defined?(Legion::Transport::Spool)
+      def spool_publish_result(result:, payload:, envelope:, declaration:, tenant_id:)
+        return result unless spool_enabled?(@options) && defined?(Legion::Transport::Spool)
 
-        Legion::Transport::Spool.write(
-          exchange:       exchange_name_for_spool,
-          routing_key:    options[:routing_key] || routing_key || '',
-          payload:        message,
-          headers:        @options[:headers],
-          priority:       priority,
-          message_id:     message_id,
-          correlation_id: correlation_id,
-          persistent:     options.key?(:persistent) ? options[:persistent] : persistent
+        persisted = Legion::Transport::Spool.write(
+          **envelope, exchange: declaration[:name], payload: payload,
+                      exchange_type: declaration[:type], tenant_id: tenant_id
         )
-        log.info("Message spooled due to: #{error.message}")
+        return result unless persisted == true
+
+        log.info "Message persisted for replay exchange=#{declaration[:name]}"
+        result.merge(status: :spooled, accepted: false, exchange: declaration[:name])
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'transport.message.spool_write')
-      end
-
-      def exchange_name_for_spool
-        ex = exchange
-        ex.respond_to?(:name) ? ex.name : ex.to_s
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.message.exchange_name_for_spool')
-        self.class.name
+        result.merge(status: :failed, accepted: false, error_class: e.class.name, error: e.message)
       end
     end
   end

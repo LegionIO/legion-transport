@@ -6,14 +6,14 @@ module Legion
       class Task < Legion::Transport::Message
         def exchange
           if @options.key?(:exchange) && @options[:exchange].is_a?(String)
-            Legion::Transport::Exchange.new(@options[:exchange])
+            Legion::Transport::Exchange
           else
-            Legion::Transport::Exchanges::Task.new
+            Legion::Transport::Exchanges::Task
           end
         end
 
         def message
-          @options
+          @options.except(*PUBLISH_OPTION_KEYS)
         end
 
         def routing_key

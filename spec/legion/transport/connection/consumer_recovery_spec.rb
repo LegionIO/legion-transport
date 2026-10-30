@@ -67,6 +67,48 @@ RSpec.describe Legion::Transport::Connection::Recovery, rabbitmq: true do
     end
   end
 
+  %i[channel_mutex consumer_mutex].each do |lock_name|
+    it "bounds capture waiting on the old #{lock_name} without losing consumers" do
+      channel = @original.create_channel
+      queue = channel.queue('', exclusive: true)
+      consumer = recovery_consumer(queue: queue)
+      owner = lock_name == :channel_mutex ? @original : channel
+      lock = owner.instance_variable_get(:"@#{lock_name}")
+      entered = Queue.new
+      release = Queue.new
+      holder = Thread.new do
+        lock.synchronize do
+          entered << true
+          release.pop
+        end
+      end
+      Timeout.timeout(5) { entered.pop }
+
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      Timeout.timeout(2) do
+        expect { described_class.capture(sessions: [@original], timeout: 0.05) }.to raise_error(Timeout::Error)
+      end
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 1
+      release << true
+      Timeout.timeout(5) { holder.join }
+
+      snapshot = described_class.capture(sessions: [@original])
+      disconnect_recovery_session(session: @original)
+      replacement = recovery_session
+      snapshot.restore(session: replacement)
+      queue.publish('after capture timeout')
+      label, info, payload = next_recovery_delivery
+      expect([label, payload]).to eq(['active', 'after capture timeout'])
+      consumer.channel.acknowledge(info.delivery_tag)
+      consumer.cancel
+      expect(queue.consumer_count).to eq(0)
+    ensure
+      release&.push(true)
+      holder&.kill
+      holder&.join(2)
+    end
+  end
+
   it 'keeps actor queue references, exchange bindings, raw consumers and prefetch working on a new session' do
     declaration_channel = @original.create_channel
     source = declaration_channel.direct(recovery_name(kind: :exchange), auto_delete: true)

@@ -31,6 +31,15 @@ RSpec.describe 'Message settings and publish contract (#20)' do
     end
   end
 
+  describe 'Message#persistent override' do
+    it 'retains explicit false when persistence is enabled in settings' do
+      settings = Legion::Transport.settings
+      allow(Legion::Transport).to receive(:settings).and_return(settings.merge(messages: settings[:messages].merge(persistent: true)))
+
+      expect(Legion::Transport::Message.new(persistent: false).persistent).to be false
+    end
+  end
+
   describe 'Messages::SubTask#validate' do
     it 'passes validation when function_id is an Integer (no function string required)' do
       instance = Legion::Transport::Messages::SubTask.allocate

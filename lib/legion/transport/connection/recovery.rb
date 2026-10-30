@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'timeout'
+
 module Legion
   module Transport
     module Connection
@@ -7,8 +9,10 @@ module Legion
       # Keep the original channels: actors retain queues, consumers and channel references.
       # Capture before teardown; restore only after the old transport and workers stop.
       class Recovery
-        def self.capture(sessions:, excluded_channels: [])
-          new(sessions: sessions.compact.uniq, excluded_channels: excluded_channels)
+        def self.capture(sessions:, excluded_channels: [], timeout: Legion::Transport::Connection::SHUTDOWN_TIMEOUT)
+          Timeout.timeout(timeout) do
+            new(sessions: sessions.compact.uniq, excluded_channels: excluded_channels)
+          end
         end
 
         def initialize(sessions:, excluded_channels: [])

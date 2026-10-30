@@ -17,6 +17,8 @@ RSpec.describe Legion::Transport::Connection::Vault do
     }
   end
 
+  after { test_obj.send(:cleanup_pki_tempfiles) }
+
   describe '#vault_pki_tls_options' do
     context 'when vault_pki is disabled in settings' do
       before { Legion::Settings[:transport][:tls] = { vault_pki: false } }
@@ -104,6 +106,58 @@ RSpec.describe Legion::Transport::Connection::Vault do
         opts = test_obj.vault_pki_tls_options
         expect(opts[:tls_ca_certificates]).to be_an(Array)
         expect(opts[:tls_ca_certificates]).not_to be_empty
+      end
+
+      it 'keeps PEM files readable through GC until their owner is retired' do
+        opts = test_obj.vault_pki_tls_options
+        paths = [opts[:tls_cert], opts[:tls_key], *opts[:tls_ca_certificates]]
+        GC.start(full_mark: true, immediate_sweep: true)
+        expect(paths.map { |path| File.read(path) }).to eq([cert_data[:cert], cert_data[:key], *cert_data[:ca_chain]])
+
+        test_obj.send(:cleanup_pki_tempfiles)
+        expect(paths.none? { |path| File.exist?(path) }).to be(true)
+      end
+
+      it 'retains session PEM owners across native restart and cleans up at retirement', :rabbitmq do
+        connection = Legion::Transport::Connection.clone
+        connection.instance_variables.each { |name| connection.remove_instance_variable(name) }
+        candidate = instance_double(Bunny::Session, close: nil)
+        paths = nil
+        allow(Bunny).to receive(:new) do |options|
+          paths = [options[:tls_cert], options[:tls_key], *options[:tls_ca_certificates]]
+          candidate
+        end
+        reads = []
+        allow(candidate).to receive(:start) do
+          GC.start(full_mark: true, immediate_sweep: true)
+          reads << paths.map { |path| File.read(path) }
+        end
+
+        session = connection.create_dedicated_session(name: 'pki-lifetime')
+        GC.start(full_mark: true, immediate_sweep: true)
+        session.start
+        expect(reads).to eq(Array.new(2) { [cert_data[:cert], cert_data[:key], *cert_data[:ca_chain]] })
+        connection.send(:tear_down_session, session)
+        expect(paths.none? { |path| File.exist?(path) }).to be(true)
+      ensure
+        connection&.send(:tear_down_session, candidate) if candidate
+      end
+
+      it 'removes all PEM material after a failed session handshake', :rabbitmq do
+        connection = Legion::Transport::Connection.clone
+        connection.instance_variables.each { |name| connection.remove_instance_variable(name) }
+        allow(connection).to receive(:handle_exception)
+        candidate = instance_double(Bunny::Session, close: nil)
+        paths = nil
+        allow(Bunny).to receive(:new) do |options|
+          paths = [options[:tls_cert], options[:tls_key], *options[:tls_ca_certificates]]
+          candidate
+        end
+        allow(candidate).to receive(:start).and_raise(IOError, 'TLS handshake failed')
+
+        expect { connection.create_dedicated_session(name: 'pki-failure') }
+          .to raise_error(Legion::Transport::ClusterUnavailable)
+        expect(paths.none? { |path| File.exist?(path) }).to be(true)
       end
     end
 

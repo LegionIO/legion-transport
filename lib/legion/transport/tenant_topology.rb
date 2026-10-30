@@ -11,21 +11,22 @@ module Legion
       DEFAULT_PREFIX_FORMAT = 't.%<tenant_id>s.%<name>s'
 
       def self.exchange_name(base_name, tenant_id: nil)
-        return base_name unless enabled?
+        name = base_name.to_s
+        return name if name.empty? || !enabled? || shared?(name)
 
-        tid = tenant_id || current_tenant_id
-        return base_name if tid.nil? || tid == 'default' || shared?(base_name)
-
-        format(prefix_format, tenant_id: tid, name: base_name)
+        scoped_name(name: name, tenant_id: resolve_tenant_id(tenant_id: tenant_id))
       end
 
       def self.queue_name(base_name, tenant_id: nil)
-        return base_name unless enabled?
+        name = base_name.to_s
+        return name if name.empty? || !enabled?
 
-        tid = tenant_id || current_tenant_id
-        return base_name if tid.nil? || tid == 'default'
+        scoped_name(name: name, tenant_id: resolve_tenant_id(tenant_id: tenant_id))
+      end
 
-        format(prefix_format, tenant_id: tid, name: base_name)
+      def self.resolve_tenant_id(tenant_id: nil)
+        value = (tenant_id || current_tenant_id).to_s.strip
+        value.empty? ? 'default' : value
       end
 
       def self.shared?(name)
@@ -42,10 +43,21 @@ module Legion
       def self.current_tenant_id
         return nil unless defined?(Legion::TenantContext)
 
-        Legion::TenantContext.current_tenant_id
+        Legion::TenantContext.current
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: :tenant_topology_current_tenant_id)
         nil
+      end
+
+      private_class_method def self.scoped_name(name:, tenant_id:)
+        return name if tenant_id == 'default'
+
+        marker = '__legion_resource_name__'
+        template = format(prefix_format, tenant_id: tenant_id, name: marker)
+        pattern = Regexp.escape(template).sub(marker, '.+')
+        return name if name.match?(/\A#{pattern}\z/)
+
+        format(prefix_format, tenant_id: tenant_id, name: name)
       end
 
       private_class_method def self.prefix_format

@@ -10,6 +10,17 @@
 - Keep forced reconnect exclusive to its owning caller and restore existing queue, channel, and consumer references, bindings, and QoS before notifying reconnect callbacks.
 - Reuse and track thread-local publisher channels in pool mode; preserve publisher caches across repeated forced reconnects without accumulating log channels.
 - Start each Bunny session inside its host failover attempt and clean up failed handshakes before advancing to the next host. Fixes #41.
+- Bound recovery snapshot lock acquisition and invalidate the complete reconnect generation on shutdown; cancelled owners cannot reopen transport or disturb a newer session. Stop legacy Bunny readers before intentional socket closure to avoid asynchronous owner-thread errors.
+- Use the supported zero-argument Bunny confirm API with bounded waits, retain Vault PEM owners for the session/recovery lifetime, and keep DLX cleanup failures from masking declaration failures. Fixes #42.
+- Support the common lite-mode channel factory contract, ordered pending-only delivery outside global locks, exchange-scoped direct/topic/fanout routing, and atomic consumer cancellation with session-owned cleanup. Fixes #43.
+- Apply tenant naming at real declaration/binding/DLX boundaries, scope exchange caches by tenant and declaration context, align provisioning with actual resources, and enforce encoded-byte quotas in message/helper publishing and replay. Fixes #44.
+- Correlate mandatory returns on exchanges, retire ambiguous confirm-timeout channels, persist only successful spool writes, and replay claimed wire records asynchronously after connection recovery with at-least-once confirmation semantics.
+- Preserve existing queues, bindings, and DLQ contents on declaration mismatches; surface required DLX failures, report actual HTTP publish outcomes, and default to persistent messages with prefetch 2 while retaining explicit false/zero overrides. Fixes #45.
+- Fail closed when requested encryption is not ready, bound encryption attempts, retain cipher/IV metadata in spool replay, and preserve explicit plaintext and bootstrap exceptions. Fixes #46.
+
+### Changed
+- Direct `Local.subscribe` uses `exchange_name:` for named exchanges; its default is the default exchange, not an unscoped routing-key subscription.
+- New spool records preserve encoded payload bytes and the full envelope. Legacy unversioned records remain on disk for explicit migration rather than risking plaintext replay; capacity exhaustion rejects new writes instead of evicting pending data.
 
 ## [1.4.30] - 2026-07-31
 

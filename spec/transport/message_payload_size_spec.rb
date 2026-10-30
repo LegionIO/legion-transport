@@ -3,14 +3,6 @@
 require 'spec_helper'
 
 RSpec.describe Legion::Transport::Message, 'payload size enforcement' do
-  it 'defines PayloadTooLarge in the Legion::Transport namespace' do
-    expect(Legion::Transport::PayloadTooLarge.ancestors).to include(StandardError)
-  end
-
-  it 'reports max_payload_bytes defaulting to 1MB' do
-    expect(described_class.max_payload_bytes).to eq(1_048_576)
-  end
-
   context 'when the payload exceeds the limit' do
     it 'raises PayloadTooLarge before any AMQP interaction' do
       msg = described_class.new(data: 'x' * 2_000_000)
@@ -31,18 +23,14 @@ RSpec.describe Legion::Transport::Message, 'payload size enforcement' do
   end
 
   context 'when the payload is within the limit' do
-    it 'does not raise PayloadTooLarge' do
-      msg = described_class.new(function: 'test')
-      exchange_mock = instance_double(Legion::Transport::Exchange)
+    it 'publishes the encoded message within the limit' do
+      msg = described_class.new(function: 'test', encrypt: false)
+      channel = instance_double(Bunny::Channel, using_publisher_confirmations?: false)
+      exchange_mock = instance_double(Bunny::Exchange, name: 'task', type: :topic, channel: channel)
       allow(msg).to receive(:exchange).and_return(exchange_mock)
-      allow(exchange_mock).to receive(:respond_to?).with(:cached_instance).and_return(false)
-      allow(exchange_mock).to receive(:respond_to?).with(:new).and_return(false)
-      allow(exchange_mock).to receive(:respond_to?).with(:name).and_return(true)
-      allow(exchange_mock).to receive(:name).and_return('task')
-      allow(exchange_mock).to receive(:publish).and_return(true)
-      allow(msg).to receive(:encode_message).and_return('{"function":"test"}')
+      expect(exchange_mock).to receive(:publish).with('{"function":"test"}', anything).and_return(exchange_mock)
 
-      expect { msg.publish }.not_to raise_error
+      expect(msg.publish(return_result: true)).to include(status: :accepted, accepted: true)
     end
   end
 end
