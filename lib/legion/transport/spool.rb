@@ -5,12 +5,14 @@ require 'fileutils'
 require 'legion/logging/helper'
 require 'securerandom'
 require 'time'
+require_relative 'spool/legacy'
 
 module Legion
   module Transport
     module Spool
       class CapacityExceededError < StandardError; end
       class LegacyRecordError < StandardError; end
+      class LegacyDependencyNotReady < LegacyRecordError; end
 
       @mutex = Mutex.new
       @replay_mutex = Mutex.new
@@ -229,11 +231,19 @@ module Legion
         def drain_claim(claim:)
           file, io = claim
           confirmed_offset = 0
-          io.each_line do |line|
+          while (line = io.gets)
             next if line.strip.empty?
 
             record = Legion::JSON.load(line)
-            record[:payload] = Base64.strict_decode64(record.fetch(:payload)).force_encoding(record.fetch(:payload_encoding)) if record[:spool_version] == 2
+            unless record.key?(:spool_version)
+              upgrade_claim(claim: claim, offset: confirmed_offset)
+              confirmed_offset = 0
+              io = claim.last
+              next
+            end
+            raise LegacyRecordError, "unsupported spool version: #{record[:spool_version].inspect}" unless record[:spool_version] == 2
+
+            record[:payload] = Base64.strict_decode64(record.fetch(:payload)).force_encoding(record.fetch(:payload_encoding))
             return false unless yield(record) == true
 
             confirmed_offset = io.pos
@@ -241,10 +251,48 @@ module Legion
           true
         ensure
           begin
-            compact_claim(file: file, io: io, offset: confirmed_offset) if confirmed_offset.positive?
+            compact_claim(file: file, io: io, offset: confirmed_offset) if confirmed_offset.positive? && io.equal?(claim.last)
           ensure
-            io.close
+            claim.last.close
           end
+        end
+
+        # The replacement stays locked after rename, until this drainer releases its claim.
+        # Nothing is published until the complete upgraded tail and directory entry are durable.
+        def upgrade_claim(claim:, offset:)
+          file, original = claim
+          temporary = "#{file}.#{SecureRandom.hex(4)}.tmp"
+          # Ownership transfers to drain_claim on rename; this method closes failed replacements.
+          replacement = File.open(temporary, File::RDWR | File::CREAT | File::EXCL, 0o600) # rubocop:disable Style/FileOpen
+          replacement.flock(File::LOCK_EX)
+          original.seek(offset)
+          original.each_line do |line|
+            next if line.strip.empty?
+
+            record = Legion::JSON.load(line)
+            unless record.key?(:spool_version)
+              record = Legion::Transport::Spool::Legacy.convert(record: record)
+              line = "#{Legion::JSON.dump(record)}\n"
+            end
+            raise IOError, 'incomplete spool upgrade write' unless replacement.write(line) == line.bytesize
+          end
+          replacement.flush
+          replacement.fsync
+          replacement.rewind
+          with_directory_lock do
+            Thread.handle_interrupt(Object => :never) do
+              File.rename(temporary, file)
+              claim[1] = replacement
+            end
+            sync_directory
+          end
+        rescue Legion::Transport::EncryptionNotReady, LegacyDependencyNotReady
+          @upgrade_waiting_for_dependency = true
+          raise
+        ensure
+          original.close unless original.equal?(claim.last)
+          replacement&.close unless replacement.equal?(claim.last)
+          File.delete(temporary) if temporary && File.exist?(temporary)
         end
 
         def compact_claim(file:, io:, offset:)
@@ -281,12 +329,15 @@ module Legion
             end
             break unless ready
 
+            @upgrade_waiting_for_dependency = false
             completed = drain { |record| !@replay_stopping && replay_record(record: record) }
             pending = completed && !@replay_stopping && count.positive?
             again = @replay_mutex.synchronize do
-              !@replay_stopping && (pending || @replay_requested)
+              !@replay_stopping && (pending || @replay_requested || @upgrade_waiting_for_dependency)
             end
             break unless again
+
+            sleep 1 if @upgrade_waiting_for_dependency
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'transport.spool.replay')
@@ -303,10 +354,6 @@ module Legion
         end
 
         def replay_record(record:)
-          unless record[:spool_version] == 2
-            raise LegacyRecordError, 'legacy spool record retained: original encoded payload/encryption policy is unknown; migrate explicitly'
-          end
-
           envelope = record.fetch(:envelope)
           payload = record.fetch(:payload)
           channel = Legion::Transport::Connection.channel

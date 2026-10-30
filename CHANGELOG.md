@@ -17,10 +17,11 @@
 - Correlate mandatory returns on exchanges, retire ambiguous confirm-timeout channels, persist only successful spool writes, and replay claimed wire records asynchronously after connection recovery with at-least-once confirmation semantics.
 - Preserve existing queues, bindings, and DLQ contents on declaration mismatches; surface required DLX failures, report actual HTTP publish outcomes, and default to persistent messages with prefetch 2 while retaining explicit false/zero overrides. Fixes #45.
 - Fail closed when requested encryption is not ready, bound encryption attempts, retain cipher/IV metadata in spool replay, and preserve explicit plaintext and bootstrap exceptions. Fixes #46.
+- Automatically upgrade historical raw JSONL spool records to durable wire envelopes before replay; preserve routing, tenant, encryption intent and false/zero metadata, replace stale IVs, and reuse stored ciphertext across interrupted replay. Retry key readiness and late-loaded exchange classes without a manual trigger. Retain original data on failed or interrupted conversion and hold file ownership across atomic replacement.
 
 ### Changed
 - Direct `Local.subscribe` uses `exchange_name:` for named exchanges; its default is the default exchange, not an unscoped routing-key subscription.
-- New spool records preserve encoded payload bytes and the full envelope. Legacy unversioned records remain on disk for explicit migration rather than risking plaintext replay; capacity exhaustion rejects new writes instead of evicting pending data.
+- New spool records preserve encoded payload bytes and the full envelope. Historical unversioned records upgrade automatically during replay; capacity exhaustion rejects new writes instead of evicting pending data.
 
 ## [1.4.30] - 2026-07-31
 

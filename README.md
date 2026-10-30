@@ -104,7 +104,11 @@ Connection failures can persist the already encoded wire payload, complete AMQP 
 - Configure `Legion::Settings[:transport][:spool][:directory]` or pass `directory:` to `Spool.setup`; the default is `~/.legionio/spool`. Capacity limits reject new writes rather than deleting pending messages.
 - Manual `Spool.drain` callbacks acknowledge a record only by returning literal `true`.
 
-Unversioned spool records from older releases are retained and stop automatic replay. They require explicit inspection/migration because their original encryption policy and encoded wire payload cannot be reconstructed safely.
+Older unversioned JSONL files upgrade automatically during replay; no migration command or opt-in is required. Their raw payloads are encoded once, with saved routing, tenant and envelope metadata preserved. Saved encryption flags and evidence of an earlier encrypted attempt take precedence over the current encryption default; explicit plaintext and cluster-secret bootstrap requests remain supported. A stale saved IV is replaced with the IV for the newly encoded bytes, not reused.
+
+The claimed file is streamed to a locked replacement, flushed and fsynced, then atomically renamed before any upgraded record is published. Interrupted conversion retains the original data; interruption after conversion replays the stored wire bytes without re-encrypting. Missing key readiness or extension classes still loading at startup are retried automatically. Concurrent appends and existing versioned records remain intact.
+
+Records already missing essential information—such as an old `Direct` fallback that never saved its broker exchange—remain on disk with a specific error. Replay never invents a destination or drops malformed records.
 
 ### Encryption policy
 

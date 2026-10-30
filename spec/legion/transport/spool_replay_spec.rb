@@ -216,21 +216,4 @@ RSpec.describe Legion::Transport::Spool, 'automatic replay' do
     expect(deliveries.pop(timeout: 2).first).to eq('é')
     expect(described_class.count).to eq(0)
   end
-
-  it 'retains legacy raw messages instead of sending them as plaintext or fabricated ciphertext' do
-    subscribe_to_replay
-    legacy = { exchange: 't.alpha.task', routing_key: 'run', payload: { secret: 'sensitive' },
-               content_encoding: 'encrypted/cs' }
-    File.write(File.join(spool_dir, 'legacy.jsonl'), "#{Legion::JSON.dump(legacy)}\n")
-    described_class.replay_async
-    finish_replay
-    expect(deliveries).to be_empty
-    expect(described_class.count).to eq(1)
-    records = []
-    described_class.drain do |record|
-      records << record
-      false
-    end
-    expect(records).to eq([legacy])
-  end
 end
