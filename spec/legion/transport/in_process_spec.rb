@@ -37,7 +37,7 @@ RSpec.describe Legion::Transport::InProcess do
     end
   end
 
-  def subscribe_weak_callback(queue:)
+  def subscribe_weak_callback(queue:, **)
     receiver = Object.new
     receiver.define_singleton_method(:call) { |_info, _properties, _payload| nil }
     [queue.subscribe(&receiver.method(:call)), WeakRef.new(receiver)]

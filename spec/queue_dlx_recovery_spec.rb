@@ -26,7 +26,7 @@ RSpec.describe 'Required queue DLX declarations' do
     expect(queue_instance).to receive(:handle_exception).with(declaration_error, hash_including(handled: false))
     expect(queue_instance).to receive(:handle_exception).with(cleanup_error, hash_including(handled: true))
 
-    expect { queue_instance.ensure_dlx(merged) }.to(raise_error { |error| expect(error).to equal(declaration_error) })
+    expect { queue_instance.ensure_dlx(merged_options: merged) }.to(raise_error { |error| expect(error).to equal(declaration_error) })
   end
 
   it 'logs a cleanup-only failure without making successful DLX declarations fail' do
@@ -34,14 +34,14 @@ RSpec.describe 'Required queue DLX declarations' do
     allow(mock_channel).to receive(:close).and_raise(cleanup_error)
     expect(queue_instance).to receive(:handle_exception).with(cleanup_error, hash_including(handled: true))
 
-    expect { queue_instance.ensure_dlx(merged) }.not_to raise_error
+    expect { queue_instance.ensure_dlx(merged_options: merged) }.not_to raise_error
   end
 
   it 'surfaces unavailable transport instead of claiming required DLX provisioning succeeded' do
     allow(mock_session).to receive(:open?).and_return(false)
     expect(mock_session).not_to receive(:create_channel)
 
-    expect { queue_instance.ensure_dlx(merged) }.to raise_error(IOError, /required DLX test\.dlx/)
+    expect { queue_instance.ensure_dlx(merged_options: merged) }.to raise_error(IOError, /required DLX test\.dlx/)
   end
 
   it 'never deletes an incompatible DLX exchange or its queued messages', :rabbitmq do
@@ -51,7 +51,7 @@ RSpec.describe 'Required queue DLX declarations' do
     expect(mock_channel).not_to receive(:queue_delete)
     expect(mock_session).to receive(:create_channel).once.and_return(mock_channel)
 
-    expect { queue_instance.ensure_dlx(merged) }.to(raise_error { |error| expect(error).to equal(mismatch) })
+    expect { queue_instance.ensure_dlx(merged_options: merged) }.to(raise_error { |error| expect(error).to equal(mismatch) })
   end
 
   it 'does not declare a source queue after its dead-letter binding fails', :rabbitmq do
@@ -67,8 +67,8 @@ RSpec.describe 'Required queue DLX declarations' do
 
   it 'does not provision topology for passive or no-declare consumers' do
     expect(mock_session).not_to receive(:create_channel)
-    queue_instance.ensure_dlx(merged.merge(passive: true))
-    queue_instance.ensure_dlx(merged.merge(no_declare: true))
-    queue_instance.ensure_dlx(arguments: {})
+    queue_instance.ensure_dlx(merged_options: merged.merge(passive: true))
+    queue_instance.ensure_dlx(merged_options: merged.merge(no_declare: true))
+    queue_instance.ensure_dlx(merged_options: { arguments: {} })
   end
 end

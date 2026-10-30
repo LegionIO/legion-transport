@@ -11,7 +11,7 @@ module Legion
 
       EXCHANGE_NAMES = %w[task results events].freeze
 
-      def self.provision(tenant_id, channel: nil)
+      def self.provision(tenant_id, channel: nil, **)
         tenant_id = TenantTopology.resolve_tenant_id(tenant_id: tenant_id)
         ch = channel || Legion::Transport::Connection.channel
         begin
@@ -31,7 +31,7 @@ module Legion
         raise
       end
 
-      def self.deprovision(tenant_id, channel: nil)
+      def self.deprovision(tenant_id, channel: nil, **)
         return log.debug('Skipping deprovision: topology disabled') unless TenantTopology.enabled?
 
         tid = tenant_id.to_s.strip
@@ -65,12 +65,12 @@ module Legion
         raise
       end
 
-      private_class_method def self.exchange_declaration(name:, tenant_id:)
+      private_class_method def self.exchange_declaration(name:, tenant_id:, **)
         klass = name == 'task' ? Legion::Transport::Exchanges::Task : Legion::Transport::Exchange
         klass.declaration(name: name, tenant_id: tenant_id)
       end
 
-      private_class_method def self.safely_close_channel(channel:)
+      private_class_method def self.safely_close_channel(channel:, **)
         channel.close if channel.respond_to?(:close)
       rescue StandardError => e
         handle_exception(e, level: :warn, handled: true, operation: 'transport.tenant_provisioner.close_channel')

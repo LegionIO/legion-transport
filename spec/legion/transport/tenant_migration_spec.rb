@@ -30,12 +30,12 @@ RSpec.describe Legion::Transport::TenantMigration, :rabbitmq do
   end
 
   after do
-    @migration_sessions.each { |session| Legion::Transport::Connection.send(:tear_down_session, session) if session.open? }
+    @migration_sessions.each { |session| Legion::Transport::Connection.send(:tear_down_session, sess: session) if session.open? }
     if @session&.open?
       cleanup = @session.create_channel
       @queues.uniq.each { |name| cleanup.queue_delete(name) }
       @exchanges.uniq.reverse_each { |name| cleanup.exchange_delete(name) }
-      Legion::Transport::Connection.send(:tear_down_session, @session)
+      Legion::Transport::Connection.send(:tear_down_session, sess: @session)
     end
     Legion::Transport::Exchange.clear_cache
     Legion::Transport::TenantQuota.reset!

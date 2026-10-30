@@ -36,6 +36,8 @@ gem 'legion-transport'
 
 ## Usage
 
+Keyword-based recovery, spooling, and tenant-migration APIs accept unrelated keyword context without rejecting the call; named option splats still consume or forward their options. Existing positional constructor and message-publish interfaces remain supported.
+
 ### Basic Connection
 
 ```ruby

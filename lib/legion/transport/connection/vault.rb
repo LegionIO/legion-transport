@@ -13,7 +13,7 @@ module Legion
         # Activated when `transport.tls.vault_pki: true` AND `Legion::Crypt::Mtls.enabled?`.
         # Keep PEM owners alive until their session is retired, including native recovery.
 
-        def vault_pki_tls_options(tempfiles: nil)
+        def vault_pki_tls_options(tempfiles: nil, **)
           return {} unless vault_pki_enabled?
           return {} unless defined?(Legion::Crypt::Mtls)
           return {} unless Legion::Crypt::Mtls.enabled?
@@ -46,7 +46,7 @@ module Legion
 
         private
 
-        def build_bunny_tls_opts(cert_data:, tempfiles:)
+        def build_bunny_tls_opts(cert_data:, tempfiles:, **)
           cert_file = write_pki_tempfile(prefix: 'legion-cert-', content: cert_data[:cert], tempfiles: tempfiles)
           key_file = write_pki_tempfile(prefix: 'legion-key-', content: cert_data[:key], tempfiles: tempfiles)
           ca_files = Array(cert_data[:ca_chain]).map.with_index do |pem, i|
@@ -62,7 +62,7 @@ module Legion
           }
         end
 
-        def write_pki_tempfile(prefix:, content:, tempfiles:)
+        def write_pki_tempfile(prefix:, content:, tempfiles:, **)
           file = Tempfile.new([prefix, '.pem'])
           tempfiles << file
           file.write(content)
@@ -70,7 +70,7 @@ module Legion
           file.path
         end
 
-        def cleanup_pki_tempfiles(tempfiles: @pki_tempfiles)
+        def cleanup_pki_tempfiles(tempfiles: @pki_tempfiles, **)
           tempfiles&.each do |file|
             file.close!
           rescue StandardError => e

@@ -27,6 +27,7 @@
 ### Changed
 - Direct `Local.subscribe` uses `exchange_name:` for named exchanges; its default is the default exchange, not an unscoped routing-key subscription.
 - New spool records preserve encoded payload bytes and the full envelope. Historical unversioned records upgrade automatically during replay; capacity exhaustion rejects new writes instead of evicting pending data.
+- Standardize changed keyword-based transport methods with anonymous `**` when extra context is unused, preserve intentional keyword forwarding, and use kwargs for internal helpers without migrating existing application-facing positional APIs.
 
 ## [1.4.30] - 2026-07-31
 

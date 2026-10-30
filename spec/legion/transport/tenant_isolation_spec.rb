@@ -41,7 +41,7 @@ RSpec.describe 'Tenant topology broker isolation', :rabbitmq do
     @exchanges << dlx
     @queues << "#{dlx}.queue"
     queue = Legion::Transport::Queues::TaskUpdate.new(nil, tenant_id: tenant_id, durable: false, exclusive: true,
-                                                        arguments: { 'x-queue-type': 'classic' })
+                                                      arguments: { 'x-queue-type': 'classic' })
     @queues << queue.name
     queue.bind('task', routing_key: 'work')
     [exchange, queue, dlx]
@@ -95,8 +95,8 @@ RSpec.describe 'Tenant topology broker isolation', :rabbitmq do
 
     expect do
       Legion::Transport::Queue.new('retained', tenant_id: tenant, durable: true,
-                                              arguments: { 'x-queue-type': 'classic', 'x-max-priority': 5,
-                                                           'x-dead-letter-exchange': nil })
+                                   arguments: { 'x-queue-type': 'classic', 'x-max-priority': 5,
+                                                'x-dead-letter-exchange': nil })
     end.to raise_error(Bunny::PreconditionFailed)
 
     expect(queue.pop.last).to eq('retained payload')

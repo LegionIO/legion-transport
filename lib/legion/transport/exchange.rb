@@ -16,13 +16,13 @@ module Legion
           Legion::Transport::Exchange.instance_variable_get(:@instance_cache)
         end
 
-        def declaration(name: nil, options: {}, tenant_id: nil)
+        def declaration(name: nil, options: {}, tenant_id: nil, **)
           instance = allocate
           instance.send(:prepare_declaration, name: name, options: options, tenant_id: tenant_id)
           { name: instance.instance_variable_get(:@declaration_name), type: instance.instance_variable_get(:@type) }
         end
 
-        def cached_instance(name: nil, options: {}, tenant_id: nil)
+        def cached_instance(name: nil, options: {}, tenant_id: nil, **)
           instance = allocate
           instance.send(:prepare_declaration, name: name, options: options, tenant_id: tenant_id)
           key = instance.instance_variable_get(:@cache_key)
@@ -118,7 +118,7 @@ module Legion
 
       private
 
-      def prepare_declaration(name:, options:, tenant_id:)
+      def prepare_declaration(name:, options:, tenant_id:, **)
         @options = options.dup
         @explicit_channel = @options.delete(:channel)
         @options.delete(:tenant_id)
@@ -130,7 +130,7 @@ module Legion
                       declaration_snapshot(value: @declaration_options), @explicit_channel].freeze
       end
 
-      def declaration_snapshot(value:)
+      def declaration_snapshot(value:, **)
         case value
         when Hash
           value.to_h { |key, item| [key, declaration_snapshot(value: item)] }.freeze

@@ -9,13 +9,13 @@ module Legion
       # Keep the original channels: actors retain queues, consumers and channel references.
       # Capture before teardown; restore only after the old transport and workers stop.
       class Recovery
-        def self.capture(sessions:, excluded_channels: [], timeout: Legion::Transport::Connection::SHUTDOWN_TIMEOUT)
+        def self.capture(sessions:, excluded_channels: [], timeout: Legion::Transport::Connection::SHUTDOWN_TIMEOUT, **)
           Timeout.timeout(timeout) do
             new(sessions: sessions.compact.uniq, excluded_channels: excluded_channels)
           end
         end
 
-        def initialize(sessions:, excluded_channels: [])
+        def initialize(sessions:, excluded_channels: [], **)
           @excluded_channels = excluded_channels
           @registered_sessions = {}
           @states = sessions.filter_map { |session| capture_session(session: session) }
@@ -23,7 +23,7 @@ module Legion
           @restored = false
         end
 
-        def restore(session:)
+        def restore(session:, **)
           @mutex.synchronize do
             return true if @restored || @states.empty?
             raise IOError, 'replacement session is not open' unless session&.open?
@@ -49,7 +49,7 @@ module Legion
 
         private
 
-        def capture_session(session:)
+        def capture_session(session:, **)
           # Network recovery closes channels without unregistering them. Explicit
           # Channel#close unregisters them, so retained closed channels still need recovery.
           channels = session.instance_variable_get(:@channel_mutex).synchronize do
@@ -77,7 +77,7 @@ module Legion
           state
         end
 
-        def capture_registry(state:, registry:, queues:, exchanges:)
+        def capture_registry(state:, registry:, queues:, exchanges:, **)
           queues_by_name = queues.group_by(&:name)
           exchanges_by_name = exchanges.to_h { |exchange| [exchange.name, exchange] }
           registry.filtered_queues.each do |record|
@@ -103,7 +103,7 @@ module Legion
           capture_registry_bindings(state: state, registry: registry)
         end
 
-        def capture_registry_bindings(state:, registry:)
+        def capture_registry_bindings(state:, registry:, **)
           registry.filtered_queue_bindings.each do |binding|
             state[:queue_bindings] << { queue: binding.destination, exchange: binding.source,
                                        options: { routing_key: binding.routing_key, arguments: binding.arguments },
@@ -116,7 +116,7 @@ module Legion
           end
         end
 
-        def capture_objects(state:, queues:, exchanges:)
+        def capture_objects(state:, queues:, exchanges:, **)
           queues.group_by(&:name).each do |name, objects|
             queue = objects.first
             state[:queues] << { name: name, server_named: queue.server_named?, options: queue.options.dup,
@@ -143,11 +143,11 @@ module Legion
           state[:exchange_bindings].uniq!
         end
 
-        def recovery_channel(state:, channel:)
+        def recovery_channel(state:, channel:, **)
           state[:channels].include?(channel) ? channel : state[:channels].first
         end
 
-        def active_consumers(state:)
+        def active_consumers(state:, **)
           # Channel#close retains the consumer map, whereas Basic.CancelOk removes it.
           # Recheck after teardown so a cancellation after capture is not resurrected.
           state[:consumers].select do |consumer|
@@ -171,7 +171,7 @@ module Legion
           raise IOError, 'old consumer workers are still running'
         end
 
-        def restore_channel(channel:, session:)
+        def restore_channel(channel:, session:, **)
           number = session.next_channel_id
           raise IOError, 'replacement session channel limit exhausted' if number.negative?
 
@@ -191,7 +191,7 @@ module Legion
           channel.recover_tx_mode
         end
 
-        def restore_topology(active:)
+        def restore_topology(active:, **)
           # Bunny's aggregate recovery either swallows declaration errors (2.x) or
           # replaces consumers and loses the original queue references (3.x). Use its
           # recorded topology and protocol APIs, but let every failure reach the caller.
@@ -221,7 +221,7 @@ module Legion
           end
         end
 
-        def restore_queue(queue:)
+        def restore_queue(queue:, **)
           name = queue[:name]
           unless queue[:options][:no_declare]
             requested_name = queue[:server_named] ? '' : name

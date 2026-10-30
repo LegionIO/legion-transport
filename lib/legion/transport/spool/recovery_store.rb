@@ -15,7 +15,7 @@ module Legion
 
         ID_PATTERN = /\A[0-9a-f]{32}\z/
 
-        def initialize(directory:)
+        def initialize(directory:, **)
           @directory = File.join(File.expand_path(directory), 'recovery')
           FileUtils.mkdir_p(@directory, mode: 0o700)
           File.open(File.dirname(@directory), File::RDONLY, &:fsync)
@@ -24,7 +24,7 @@ module Legion
           raise
         end
 
-        def store(id:, record:, raw_line:, error:, status: 'quarantined')
+        def store(id:, record:, raw_line:, error:, status: 'quarantined', **)
           with_record_lock(id: id) do |path|
             # An old journal marker must never resurrect a repaired or delivered entry.
             next read_entry(id: id) if File.exist?(path)
@@ -41,12 +41,12 @@ module Legion
           end
         end
 
-        def fetch(id:)
+        def fetch(id:, **)
           validate_id(id: id)
           read_entry(id: id)
         end
 
-        def entries(status: nil, limit: 100, offset: 0)
+        def entries(status: nil, limit: 100, offset: 0, **)
           raise ArgumentError, 'limit must be a positive Integer' unless limit.is_a?(Integer) && limit.positive?
           raise ArgumentError, 'offset must be a nonnegative Integer' unless offset.is_a?(Integer) && offset >= 0
 
@@ -56,7 +56,7 @@ module Legion
           records.drop(offset).take(limit).to_a
         end
 
-        def count(status: nil)
+        def count(status: nil, **)
           paths = entry_paths
           return paths.length if status.nil?
 
@@ -72,7 +72,7 @@ module Legion
           raise
         end
 
-        def update(id:)
+        def update(id:, **)
           with_record_lock(id: id) do |path|
             entry = read_entry(id: id)
             updated = yield(entry.dup)
@@ -87,11 +87,11 @@ module Legion
 
         private
 
-        def validate_id(id:)
+        def validate_id(id:, **)
           raise ArgumentError, 'recovery id must be 32 lowercase hexadecimal characters' unless id.is_a?(String) && ID_PATTERN.match?(id)
         end
 
-        def normalize_status(status:)
+        def normalize_status(status:, **)
           unless (status.is_a?(String) || status.is_a?(Symbol)) && !status.to_s.empty?
             raise ArgumentError, 'recovery status must be a nonempty String or Symbol'
           end
@@ -106,7 +106,7 @@ module Legion
           raise
         end
 
-        def read_entry(id:)
+        def read_entry(id:, **)
           entry = Legion::JSON.load(File.binread(File.join(@directory, "#{id}.json")))
           raise IOError, 'invalid persisted recovery entry' unless entry.is_a?(Hash) && entry[:id] == id
 
@@ -119,7 +119,7 @@ module Legion
           raise
         end
 
-        def with_record_lock(id:)
+        def with_record_lock(id:, **)
           validate_id(id: id)
           # This inode is never renamed or removed: all processes retain the same ownership boundary.
           File.open(File.join(@directory, "#{id}.lock"), File::RDWR | File::CREAT, 0o600) do |lock|
@@ -132,7 +132,7 @@ module Legion
           raise
         end
 
-        def persist_entry(path:, entry:)
+        def persist_entry(path:, entry:, **)
           temporary = "#{path}.#{SecureRandom.hex(16)}.tmp"
           previous = "#{temporary}.previous"
           backed_up = installed = committed = false

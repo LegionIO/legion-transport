@@ -14,23 +14,23 @@ module Legion
     module Routes
       extend Legion::Logging::Helper
 
-      def self.registered(app)
-        register_helpers(app)
-        register_status(app)
-        register_discovery(app)
-        register_publish(app)
-        register_spool_recovery(app)
-        register_tenant_migration(app)
+      def self.registered(app, **)
+        register_helpers(app: app)
+        register_status(app: app)
+        register_discovery(app: app)
+        register_publish(app: app)
+        register_spool_recovery(app: app)
+        register_tenant_migration(app: app)
       end
 
-      def self.register_helpers(app)
+      def self.register_helpers(app:, **)
         app.helpers Legion::Logging::Helper
-        register_json_helpers(app)
-        register_transport_helpers(app)
-        register_admin_errors(app)
+        register_json_helpers(app: app)
+        register_transport_helpers(app: app)
+        register_admin_errors(app: app)
       end
 
-      def self.register_json_helpers(app)
+      def self.register_json_helpers(app:, **)
         app.helpers do
           unless method_defined?(:json_response)
             define_method(:json_response) do |data, status_code: 200|
@@ -73,7 +73,7 @@ module Legion
         end
       end
 
-      def self.register_transport_helpers(app)
+      def self.register_transport_helpers(app:, **)
         app.helpers do
           unless method_defined?(:transport_subclasses)
             define_method(:transport_subclasses) do |base_class|
@@ -89,7 +89,7 @@ module Legion
         end
       end
 
-      def self.register_status(app)
+      def self.register_status(app:, **)
         app.get '/api/transport' do
           connected = begin
             Legion::Settings[:transport][:connected]
@@ -116,7 +116,7 @@ module Legion
         end
       end
 
-      def self.register_discovery(app)
+      def self.register_discovery(app:, **)
         app.get '/api/transport/exchanges' do
           klass = defined?(Legion::Transport::Exchange) ? Legion::Transport::Exchange : nil
           json_response(klass ? transport_subclasses(klass) : [])
@@ -128,7 +128,7 @@ module Legion
         end
       end
 
-      def self.register_publish(app)
+      def self.register_publish(app:, **)
         app.post '/api/transport/publish' do
           log.debug "API: POST /api/transport/publish params=#{params.keys}"
           body = parse_request_body
@@ -167,7 +167,7 @@ module Legion
         end
       end
 
-      def self.register_admin_errors(app)
+      def self.register_admin_errors(app:, **)
         app.helpers do
           define_method(:transport_admin_request) do |&operation|
             operation.call
@@ -187,7 +187,7 @@ module Legion
         end
       end
 
-      def self.register_spool_recovery(app)
+      def self.register_spool_recovery(app:, **)
         app.get '/api/transport/spool' do
           transport_admin_request { json_response(Legion::Transport::Spool.status) }
         end
@@ -221,7 +221,7 @@ module Legion
         end
       end
 
-      def self.register_tenant_migration(app)
+      def self.register_tenant_migration(app:, **)
         app.post '/api/transport/tenants/:tenant_id/migrate' do
           transport_admin_request do
             body = parse_request_body

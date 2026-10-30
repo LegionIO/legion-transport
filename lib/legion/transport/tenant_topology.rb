@@ -10,21 +10,21 @@ module Legion
       DEFAULT_SHARED_EXCHANGES = %w[legion.control legion.health legion.audit].freeze
       DEFAULT_PREFIX_FORMAT = 't.%<tenant_id>s.%<name>s'
 
-      def self.exchange_name(base_name, tenant_id: nil)
+      def self.exchange_name(base_name, tenant_id: nil, **)
         name = base_name.to_s
         return name if name.empty? || !enabled? || shared?(name)
 
         scoped_name(name: name, tenant_id: resolve_tenant_id(tenant_id: tenant_id))
       end
 
-      def self.queue_name(base_name, tenant_id: nil)
+      def self.queue_name(base_name, tenant_id: nil, **)
         name = base_name.to_s
         return name if name.empty? || !enabled?
 
         scoped_name(name: name, tenant_id: resolve_tenant_id(tenant_id: tenant_id))
       end
 
-      def self.resolve_tenant_id(tenant_id: nil)
+      def self.resolve_tenant_id(tenant_id: nil, **)
         value = (tenant_id || current_tenant_id).to_s.strip
         value.empty? ? 'default' : value
       end
@@ -49,7 +49,7 @@ module Legion
         nil
       end
 
-      private_class_method def self.scoped_name(name:, tenant_id:)
+      private_class_method def self.scoped_name(name:, tenant_id:, **)
         return name if tenant_id == 'default'
 
         marker = '__legion_resource_name__'

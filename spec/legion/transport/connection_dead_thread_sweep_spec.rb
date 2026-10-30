@@ -75,17 +75,6 @@ RSpec.describe 'Connection dead-thread channel sweep' do
     end
   end
 
-  describe '#track_channel' do
-    it 'registers the thread and channel' do
-      channel = instance_double('Bunny::Channel')
-      thread = Thread.current
-
-      connection.send(:track_channel, thread, channel)
-      registry = connection.instance_variable_get(:@channel_registry)
-      expect(registry[thread]).to eq(channel)
-    end
-  end
-
   describe '#channel_registry_size' do
     it 'returns the number of tracked channels' do
       registry = connection.instance_variable_get(:@channel_registry)

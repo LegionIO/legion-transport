@@ -24,7 +24,7 @@ module Legion
       @registry_mutex = Mutex.new
 
       class << self
-        def register_queue(tenant_id:, name:, options:, source_dlx: nil)
+        def register_queue(tenant_id:, name:, options:, source_dlx: nil, **)
           return if tenant_id == 'default' || name.to_s.empty?
           return if options[:passive] || options[:no_declare]
 
@@ -41,7 +41,7 @@ module Legion
           source
         end
 
-        def register_binding(tenant_id:, name:, exchange:, options:, remove: false)
+        def register_binding(tenant_id:, name:, exchange:, options:, remove: false, **)
           return if tenant_id == 'default' || name.to_s.empty?
 
           source = legacy_name(name: name.to_s, tenant_id: tenant_id, resource: :queue)
@@ -71,14 +71,14 @@ module Legion
           end
         end
 
-        def registered_queues(tenant_id:)
+        def registered_queues(tenant_id:, **)
           declarations = @registry_mutex.synchronize do
             @registry.filter_map { |(tenant, _name), declaration| declaration if tenant == tenant_id.to_s }
           end
           snapshot(value: declarations)
         end
 
-        def migrate(tenant_id:, queues: nil, max_messages: 10_000, timeout: 30, dry_run: false)
+        def migrate(tenant_id:, queues: nil, max_messages: 10_000, timeout: 30, dry_run: false, **)
           result = { tenant_id: nil, status: :planned, moved: 0, queues: [], errors: [] }
           result[:tenant_id] = tenant_id.to_s.strip
           session = nil
@@ -120,12 +120,12 @@ module Legion
           result
         ensure
           cleanup_transfers(session: session, transfers: transfers)
-          Connection.send(:tear_down_session, session) if session
+          Connection.send(:tear_down_session, sess: session) if session
         end
 
         private
 
-        def validate_request!(tenant_id:, max_messages:, timeout:, dry_run:)
+        def validate_request!(tenant_id:, max_messages:, timeout:, dry_run:, **)
           raise ArgumentError, 'dry_run must be true or false' unless dry_run.equal?(true) || dry_run.equal?(false)
           if tenant_id.empty? || tenant_id == 'default'
             raise Blocked,
@@ -136,7 +136,7 @@ module Legion
           raise ArgumentError, 'timeout must be finite and positive' unless timeout.is_a?(Numeric) && timeout.finite? && timeout.positive?
         end
 
-        def migration_plan(tenant_id:, definitions:)
+        def migration_plan(tenant_id:, definitions:, **)
           unless definitions.is_a?(Array) && !definitions.empty?
             raise Blocked, 'No tenant queue declarations are registered; instantiate/bind the tenant queues or supply an explicit queues manifest'
           end
@@ -154,7 +154,7 @@ module Legion
           deduplicated
         end
 
-        def queue_plans(definition:, tenant_id:)
+        def queue_plans(definition:, tenant_id:, **)
           raise ArgumentError, 'Every queues entry must be a Hash' unless definition.is_a?(Hash)
 
           entry = definition.transform_keys(&:to_sym)
@@ -190,7 +190,7 @@ module Legion
           plans
         end
 
-        def queue_options(entry:, target:)
+        def queue_options(entry:, target:, **)
           raise ArgumentError, 'Queue options must be a Hash' unless entry.fetch(:options).is_a?(Hash)
 
           options = { durable: true, auto_delete: false, exclusive: false }.merge(entry.fetch(:options).transform_keys(&:to_sym).slice(*QUEUE_OPTIONS))
@@ -201,11 +201,11 @@ module Legion
           options
         end
 
-        def queue_plan(source:, target:, options:, bindings:)
+        def queue_plan(source:, target:, options:, bindings:, **)
           { source: source, target: target, options: options, bindings: bindings, status: :planned, moved: 0, remaining: nil, consumers: nil }
         end
 
-        def target_binding(binding:, tenant_id:)
+        def target_binding(binding:, tenant_id:, **)
           raise ArgumentError, 'Every binding must be a Hash' unless binding.is_a?(Hash)
 
           entry = binding.transform_keys(&:to_sym)
@@ -222,7 +222,7 @@ module Legion
           }
         end
 
-        def lock_sources(session:, plans:)
+        def lock_sources(session:, plans:, **)
           channel = session.create_channel
           plans.sort_by { |plan| plan[:source] }.each do |plan|
             lock_name = "legion.tenant-migration.lock.#{Digest::SHA256.hexdigest(plan[:source])}"
@@ -232,7 +232,7 @@ module Legion
           end
         end
 
-        def inspect_sources(session:, plans:)
+        def inspect_sources(session:, plans:, **)
           channel = session.create_channel
           plans.each do |plan|
             state = channel.queue_declare(plan[:source], passive: true)
@@ -244,7 +244,7 @@ module Legion
           end
         end
 
-        def declare_targets(channel:, plans:)
+        def declare_targets(channel:, plans:, **)
           # Declare every DLX and target before moving any message; target consumers may already be active.
           plans.each do |plan|
             plan[:bindings].each do |binding|
@@ -257,7 +257,7 @@ module Legion
           end
         end
 
-        def transfer_queue(channel:, plan:, result:, transfers:, limits:)
+        def transfer_queue(channel:, plan:, result:, transfers:, limits:, **)
           if result[:moved] >= limits[:max_messages]
             plan[:status] = plan[:remaining].zero? ? :completed : :pending
             return
@@ -297,7 +297,7 @@ module Legion
           requeue_delivery(channel: source_channel, delivery: delivery, plan: plan) if delivery
         end
 
-        def create_transfer_exchange(channel:, plan:, transfers:)
+        def create_transfer_exchange(channel:, plan:, transfers:, **)
           transfer_name = "legion.tenant-migration.transfer.#{Digest::SHA256.hexdigest(plan[:source])}"
           # A source broker lock excludes other migrations while reclaiming a crashed owner's transfer.
           channel.exchange_delete(transfer_name)
@@ -308,7 +308,7 @@ module Legion
           transfer
         end
 
-        def confirm_transfer(transfer:, payload:, envelope:, deadline:)
+        def confirm_transfer(transfer:, payload:, envelope:, deadline:, **)
           remaining = deadline - monotonic_now
           raise Pending, 'Migration timed out before target acceptance; retry to resume' unless remaining.positive?
 
@@ -321,7 +321,7 @@ module Legion
           raise Pending, "Target did not confirm routed acceptance (#{returned || 'broker nack'}); retry to resume"
         end
 
-        def requeue_delivery(channel:, delivery:, plan:)
+        def requeue_delivery(channel:, delivery:, plan:, **)
           return unless channel&.open?
 
           Timeout.timeout(1) do
@@ -342,7 +342,7 @@ module Legion
           plan[:requeue_error] = "Session teardown will requeue unsettled deliveries: #{e.message}"
         end
 
-        def validate_tenant!(headers:, payload:, content_encoding:, tenant_id:)
+        def validate_tenant!(headers:, payload:, content_encoding:, tenant_id:, **)
           identities = headers.filter_map { |key, value| value if TENANT_HEADERS.include?(key.to_s) }
           # Inspect only cleartext JSON identity metadata, never decrypt or rewrite wire bytes.
           if [nil, '', 'identity', 'utf-8'].include?(content_encoding) && payload.match?(/\A[ \t\r\n]*\{/)
@@ -360,7 +360,7 @@ module Legion
                 "Source message tenant identity #{conflicts.uniq.inspect} conflicts with requested tenant #{tenant_id}; message remains in the source queue"
         end
 
-        def cleanup_transfers(session:, transfers:)
+        def cleanup_transfers(session:, transfers:, **)
           return unless session&.open?
 
           Timeout.timeout(1) do
@@ -371,7 +371,7 @@ module Legion
           handle_exception(e, level: :warn, handled: true, operation: 'transport.tenant_migration.cleanup_transfers')
         end
 
-        def error_status(error:)
+        def error_status(error:, **)
           case error
           when Blocked then :blocked
           when Pending, Timeout::Error, TenantQuota::QuotaExceededError then :pending
@@ -379,7 +379,7 @@ module Legion
           end
         end
 
-        def legacy_name(name:, tenant_id:, resource:)
+        def legacy_name(name:, tenant_id:, resource:, **)
           marker = '__legion_migration_resource__'
           resolved = TenantTopology.public_send("#{resource}_name", marker, tenant_id: tenant_id)
           return name if resolved == marker || (resource == :exchange && TenantTopology.shared?(name))
@@ -390,7 +390,7 @@ module Legion
           name[prefix.length, name.length - prefix.length - suffix.length]
         end
 
-        def snapshot(value:)
+        def snapshot(value:, **)
           case value
           when Hash then value.to_h { |key, item| [key, snapshot(value: item)] }
           when Array then value.map { |item| snapshot(value: item) }

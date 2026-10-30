@@ -265,7 +265,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
 
       it 'creates the DLX exchange and queue' do
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
-        instance.ensure_dlx(merged_options)
+        instance.ensure_dlx(merged_options: merged_options)
         expect(channel_double).to have_received(:exchange_declare_without_recording_topology).with('github.dlx', 'fanout', anything)
       end
     end
@@ -277,7 +277,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
         stub_identity(resolved: false)
         stub_mode(infra: true, agent: false)
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
-        instance.ensure_dlx(merged_options)
+        instance.ensure_dlx(merged_options: merged_options)
         expect(channel_double).not_to have_received(:exchange_declare_without_recording_topology)
       end
 
@@ -285,7 +285,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
         stub_identity(resolved: true)
         stub_mode(infra: false, agent: false)
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
-        instance.ensure_dlx(merged_options)
+        instance.ensure_dlx(merged_options: merged_options)
         expect(channel_double).not_to have_received(:exchange_declare_without_recording_topology)
       end
 
@@ -293,7 +293,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
         stub_identity(resolved: true)
         stub_mode(infra: true, agent: false)
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
-        instance.ensure_dlx(merged_options)
+        instance.ensure_dlx(merged_options: merged_options)
         expect(channel_double).to have_received(:exchange_declare_without_recording_topology).with('github.dlx', 'fanout', anything)
       end
 
@@ -301,7 +301,7 @@ RSpec.describe 'Queue passive declares (credential scoping)' do
         stub_identity(resolved: true)
         stub_mode(infra: false, agent: true)
         merged_options = { arguments: { 'x-dead-letter-exchange': 'github.dlx' } }
-        instance.ensure_dlx(merged_options)
+        instance.ensure_dlx(merged_options: merged_options)
         expect(channel_double).not_to have_received(:exchange_declare_without_recording_topology)
       end
     end

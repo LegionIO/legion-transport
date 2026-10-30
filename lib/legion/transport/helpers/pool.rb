@@ -12,7 +12,7 @@ module Legion
 
         CLOSE_TIMEOUT = 1
 
-        def initialize(size: 1, timeout: 5, &block)
+        def initialize(size: 1, timeout: 5, **, &block)
           @size          = size
           @timeout       = timeout
           @factory       = block
@@ -33,11 +33,11 @@ module Legion
             return create_connection(deadline: deadline) unless connection
             return connection unless connection.respond_to?(:closed?) && connection.closed?
 
-            checkin(connection)
+            checkin(connection: connection)
           end
         end
 
-        def checkin(connection)
+        def checkin(connection:, **)
           available = connection.respond_to?(:open?) && connection.open?
           owned = @mutex.synchronize do
             next false unless @in_use.delete(connection)
@@ -87,7 +87,7 @@ module Legion
 
         private
 
-        def reserve_connection(deadline:)
+        def reserve_connection(deadline:, **)
           @mutex.synchronize do
             loop do
               raise Legion::Transport::PoolClosed, 'connection pool is shut down' if @closed
@@ -110,7 +110,7 @@ module Legion
           end
         end
 
-        def create_connection(deadline:)
+        def create_connection(deadline:, **)
           connection = nil
           registered = false
           begin
@@ -139,7 +139,7 @@ module Legion
           end
         end
 
-        def close_connection(connection:, failure: nil)
+        def close_connection(connection:, failure: nil, **)
           close_session = @mutex.synchronize { @close_session }
           if close_session
             close_session.call(connection)

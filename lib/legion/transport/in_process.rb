@@ -67,7 +67,7 @@ module Legion
           end
         end
 
-        def unregister_channel(channel:)
+        def unregister_channel(channel:, **)
           @mutex.synchronize { @channels.delete(channel) }
         end
 
@@ -83,7 +83,7 @@ module Legion
       class Channel
         attr_reader :connection
 
-        def initialize(connection: nil)
+        def initialize(connection: nil, **)
           @connection = connection
           @open = true
           @mutex = Mutex.new
@@ -100,11 +100,11 @@ module Legion
           true
         end
 
-        def prefetch(count, _global: false)
+        def prefetch(count, _global = false, **) # rubocop:disable Style/OptionalBooleanParameter
           count
         end
 
-        def basic_qos(count, _global: false)
+        def basic_qos(count, _global = false, **) # rubocop:disable Style/OptionalBooleanParameter
           prefetch(count)
         end
 
@@ -160,7 +160,8 @@ module Legion
         def publish(payload, routing_key: '', **properties)
           raise ChannelAlreadyClosed, 'local exchange channel is closed' unless @channel.open?
 
-          Legion::Transport::Local.publish(@name, routing_key, payload, exchange_type: @type, implicit_queue: false, **properties)
+          Legion::Transport::Local.publish(@name, routing_key, payload,
+                                           exchange_type: @type, implicit_queue: false, **properties)
         end
 
         def delete(_options = {}, **)
@@ -222,7 +223,7 @@ module Legion
           @cancelled = false
         end
 
-        def register(queue:, owner:, &callback)
+        def register(queue:, owner:, **, &callback)
           @subscription = Legion::Transport::Local.add_subscription(queue: queue, owner: owner, &callback)
           Legion::Transport::Local.deliver_pending(queue: queue)
         end

@@ -23,7 +23,7 @@ module Legion
         include Legion::Logging::Helper
 
         def setup(directory: nil, max_file_bytes: 10_485_760, max_total_bytes: 524_288_000,
-                  max_files: 100, max_age_seconds: 259_200)
+                  max_files: 100, max_age_seconds: 259_200, **)
           @mutex.synchronize do
             @directory = directory || Legion::Settings[:transport].dig(:spool, :directory) || File.expand_path('~/.legionio/spool')
             @max_file_bytes = max_file_bytes
@@ -95,7 +95,7 @@ module Legion
         end
 
         # deadline is an absolute Process::CLOCK_MONOTONIC time, shared with shutdown.
-        def stop_replay(deadline:)
+        def stop_replay(deadline:, **)
           worker = @replay_mutex.synchronize do
             @replay_stopping = true
             @replay_requested = false
@@ -126,17 +126,17 @@ module Legion
             waiting: @recovery_store.count(status: 'waiting'), delivered_recoveries: @recovery_store.count(status: 'delivered') }
         end
 
-        def recovery_entries(status: nil, limit: 100, offset: 0)
+        def recovery_entries(status: nil, limit: 100, offset: 0, **)
           setup unless @directory
           @recovery_store.entries(status: status, limit: limit, offset: offset).map { |entry| recovery_summary(entry: entry) }
         end
 
-        def recovery_record(id:)
+        def recovery_record(id:, **)
           setup unless @directory
           @recovery_store.fetch(id: id)
         end
 
-        def repair_record(id:, changes:)
+        def repair_record(id:, changes:, **)
           setup unless @directory
           validate_repair_changes(changes: changes)
 
@@ -162,7 +162,7 @@ module Legion
           recovery_summary(entry: updated)
         end
 
-        def retry_recovery(id:)
+        def retry_recovery(id:, **)
           setup unless @directory
           updated = prepare_recovery(id: id)
           replay_async if %w[ready waiting].include?(updated[:status])
@@ -219,7 +219,7 @@ module Legion
           File.open(@directory, 'r', &:fsync)
         end
 
-        def append_path(bytes:)
+        def append_path(bytes:, **)
           current_size = @current_file && File.exist?(@current_file) ? File.size(@current_file) : 0
           reuse = current_size.positive? && current_size + bytes <= max_file_bytes
           unless reuse
@@ -236,7 +236,7 @@ module Legion
           File.join(@directory, "spool-#{Time.now.strftime('%Y%m%d%H%M%S%N')}-#{SecureRandom.hex(4)}.active.jsonl")
         end
 
-        def persist_line(file:, line:)
+        def persist_line(file:, line:, **)
           File.open(file, File::WRONLY | File::CREAT | File::APPEND, 0o600) do |io|
             io.sync = true
             original_size = io.size
@@ -253,7 +253,7 @@ module Legion
           end
         end
 
-        def rollback_append(io:, size:)
+        def rollback_append(io:, size:, **)
           io.truncate(size)
           io.flush
           File.delete(io.path) if size.zero?
@@ -262,7 +262,7 @@ module Legion
           handle_exception(e, level: :warn, handled: true, operation: 'transport.spool.rollback_append')
         end
 
-        def claim_file(file:)
+        def claim_file(file:, **)
           with_directory_lock do
             return unless File.exist?(file)
 
@@ -283,7 +283,7 @@ module Legion
           end
         end
 
-        def drain_claim(claim:)
+        def drain_claim(claim:, **)
           file, io = claim
           confirmed_offset = 0
           while (line = io.gets)
@@ -326,7 +326,7 @@ module Legion
 
         # The replacement stays locked after rename, until this drainer releases its claim.
         # Nothing is published until the complete upgraded tail and directory entry are durable.
-        def upgrade_claim(claim:, offset:)
+        def upgrade_claim(claim:, offset:, **)
           file, original = claim
           temporary = "#{file}.#{SecureRandom.hex(4)}.tmp"
           # Ownership transfers to drain_claim on rename; this method closes failed replacements.
@@ -355,7 +355,7 @@ module Legion
           File.delete(temporary) if temporary && File.exist?(temporary)
         end
 
-        def compact_claim(file:, io:, offset:)
+        def compact_claim(file:, io:, offset:, **)
           if offset == io.size
             with_directory_lock do
               File.delete(file)
@@ -379,7 +379,7 @@ module Legion
           File.delete(temporary) if temporary && File.exist?(temporary)
         end
 
-        def parse_spool_record(line:)
+        def parse_spool_record(line:, **)
           record = Legion::JSON.load(line)
           record if record.is_a?(Hash)
         rescue StandardError => e
@@ -387,11 +387,11 @@ module Legion
           nil
         end
 
-        def valid_record_id?(record:)
+        def valid_record_id?(record:, **)
           record[:record_id].is_a?(String) && record[:record_id].match?(/\A[0-9a-f]{32}\z/)
         end
 
-        def upgraded_record(line:)
+        def upgraded_record(line:, **)
           record = parse_spool_record(line: line)
           original = record
           raise LegacyRecordError, 'spool record is not a valid JSON object' unless record
@@ -410,7 +410,7 @@ module Legion
           recovery_marker(record: original, line: line, error: e)
         end
 
-        def recovery_marker(record:, line:, error:)
+        def recovery_marker(record:, line:, error:, **)
           waiting = error.is_a?(Legion::Transport::EncryptionNotReady) || error.is_a?(LegacyDependencyNotReady) ||
                     error.is_a?(IOError) || error.class.name.start_with?('OpenSSL::')
           id = record && valid_record_id?(record: record) ? record[:record_id] : SecureRandom.hex(16)
@@ -419,7 +419,7 @@ module Legion
                         raw_line: Base64.strict_encode64(line), error_class: error.class.name, error: error.message } }
         end
 
-        def retain_recovery(marker:, line:)
+        def retain_recovery(marker:, line:, **)
           begin
             detail = marker.fetch(:recovery)
             unless detail.is_a?(Hash) && %w[waiting quarantined].include?(detail[:status]) &&
@@ -438,7 +438,7 @@ module Legion
                                 error: detail.slice(:error_class, :error), status: detail.fetch(:status))
         end
 
-        def recovery_summary(entry:)
+        def recovery_summary(entry:, **)
           record = entry[:wire_record] || entry[:record] || {}
           envelope = record[:envelope].is_a?(Hash) ? record[:envelope] : {}
           entry.slice(:id, :status, :error_class, :error, :recorded_at, :repaired_at, :delivered_at).merge(
@@ -448,7 +448,7 @@ module Legion
           )
         end
 
-        def validate_repair_changes(changes:)
+        def validate_repair_changes(changes:, **)
           allowed = %i[exchange routing_key tenant_id exchange_type payload headers encrypt]
           raise ArgumentError, 'repair changes must be a Hash of supported delivery fields' unless changes.is_a?(Hash) && (changes.keys - allowed).empty?
           raise ArgumentError, 'repair changes cannot be empty' if changes.empty?
@@ -460,7 +460,7 @@ module Legion
           end
         end
 
-        def repair_wire_record(record:, changes:)
+        def repair_wire_record(record:, changes:, **)
           raise ArgumentError, 'changing tenant identity requires an explicit exchange' if changes.key?(:tenant_id) && !changes.key?(:exchange)
 
           record = record.merge(changes.slice(:exchange, :exchange_type, :tenant_id))
@@ -483,7 +483,7 @@ module Legion
           record
         end
 
-        def encode_repaired_payload(record:, envelope:, changes:)
+        def encode_repaired_payload(record:, envelope:, changes:, **)
           legacy = envelope.merge(exchange: record[:exchange], exchange_type: record.fetch(:exchange_type, 'topic'),
                                   tenant_id: record.fetch(:tenant_id, 'default'), payload: changes.fetch(:payload),
                                   spooled_at: record.fetch(:spooled_at, Time.now.iso8601))
@@ -495,7 +495,7 @@ module Legion
           Legion::Transport::Spool::Legacy.convert(record: legacy)
         end
 
-        def prepare_recovery(id:)
+        def prepare_recovery(id:, **)
           @recovery_store.update(id: id) do |entry|
             next entry if %w[ready delivered].include?(entry[:status])
 
@@ -514,7 +514,7 @@ module Legion
           end
         end
 
-        def decoded_wire_record(record:)
+        def decoded_wire_record(record:, **)
           unless record[:exchange].is_a?(String) && record[:exchange_type].is_a?(String) &&
                  record[:tenant_id].is_a?(String) && record[:envelope].is_a?(Hash) &&
                  record[:envelope][:routing_key].is_a?(String)
@@ -541,7 +541,7 @@ module Legion
           true
         end
 
-        def deliver_recovery(id:)
+        def deliver_recovery(id:, **)
           updated = @recovery_store.update(id: id) do |current|
             next current unless current[:status] == 'ready'
 
@@ -600,7 +600,7 @@ module Legion
           end
         end
 
-        def replay_record(record:)
+        def replay_record(record:, **)
           envelope = record.fetch(:envelope)
           payload = record.fetch(:payload)
           channel = Legion::Transport::Connection.channel

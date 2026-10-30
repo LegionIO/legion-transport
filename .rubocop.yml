@@ -16,6 +16,9 @@ Layout/HashAlignment:
 Metrics/MethodLength:
   Max: 50
 
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
 Metrics/ClassLength:
   Max: 1500
 

@@ -50,7 +50,7 @@ RSpec.describe Legion::Transport::Helpers::Pool do
       creating = start_thread { pool.checkout }
       expect(entered.pop(timeout: 2)).to eq(:creating)
 
-      returning = start_thread { pool.checkin(first) }
+      returning = start_thread { pool.checkin(connection: first) }
       thread_result(thread: returning)
       reusing = start_thread { pool.checkout }
       expect(thread_result(thread: reusing)).to eq(first)
@@ -81,7 +81,7 @@ RSpec.describe Legion::Transport::Helpers::Pool do
 
       release << true
       first = thread_result(thread: creating)
-      pool.checkin(first)
+      pool.checkin(connection: first)
       expect(thread_result(thread: waiter)).to eq(first)
       expect(entered).to be_empty
     end
@@ -167,7 +167,7 @@ RSpec.describe Legion::Transport::Helpers::Pool do
       allow(first).to receive_messages(open?: false, closed?: true)
 
       offset = 99
-      pool.checkin(first)
+      pool.checkin(connection: first)
       expect(entered.pop(timeout: 2)).to eq(:creating)
       expect { thread_result(thread: waiter) }.to raise_error(Legion::Transport::PoolTimeout)
     end
@@ -185,7 +185,7 @@ RSpec.describe Legion::Transport::Helpers::Pool do
       pending = Queue.new([session, second_session])
       pool = described_class.new(size: 1, timeout: 0.1) { pending.pop }
       first = pool.checkout
-      pool.checkin(first)
+      pool.checkin(connection: first)
       allow(first).to receive_messages(open?: false, closed?: true)
 
       expect(pool.checkout).to eq(second_session)
@@ -197,9 +197,9 @@ RSpec.describe Legion::Transport::Helpers::Pool do
     it 'does not create duplicate leases from repeated or foreign checkins' do
       pool = described_class.new(size: 1, timeout: 0.1) { session }
       first = pool.checkout
-      pool.checkin(second_session)
-      pool.checkin(first)
-      pool.checkin(first)
+      pool.checkin(connection: second_session)
+      pool.checkin(connection: first)
+      pool.checkin(connection: first)
       expect(pool.checkout).to eq(first)
       waiter = start_thread { pool.checkout }
 
@@ -214,7 +214,7 @@ RSpec.describe Legion::Transport::Helpers::Pool do
       pool = described_class.new(size: 2, timeout: 0.1) { pending.pop }
       first = pool.checkout
       second = pool.checkout
-      pool.checkin(first)
+      pool.checkin(connection: first)
       snapshot = pool.sessions
       expect(snapshot).to contain_exactly(first, second)
       snapshot.clear
@@ -256,7 +256,7 @@ RSpec.describe Legion::Transport::Helpers::Pool do
         expect { thread_result(thread: waiter) }.to raise_error(Legion::Transport::PoolClosed)
       end
       expect(closer).to be_alive
-      pool.checkin(first)
+      pool.checkin(connection: first)
       expect(pool.size).to eq(0)
       expect { pool.checkout }.to raise_error(Legion::Transport::PoolClosed)
 

@@ -130,7 +130,7 @@ module Legion
 
       private
 
-      def transport_encode_payload(payload:, options:)
+      def transport_encode_payload(payload:, options:, **)
         encoded = payload.is_a?(String) ? payload : Legion::JSON.dump(payload)
         encrypt = options.key?(:encrypt) ? options.delete(:encrypt) : Legion::Settings.dig(:transport, :messages, :encrypt)
         return encoded unless encrypt

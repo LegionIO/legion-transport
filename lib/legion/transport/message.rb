@@ -35,7 +35,7 @@ module Legion
         payload = encode_message
         validate_payload_size(payload: payload)
         destination, declaration, tenant_id = resolve_publish_destination
-        envelope = publish_envelope_options(@options)
+        envelope = publish_envelope_options(options: @options)
         if destination.is_a?(Class)
           destination = destination.cached_instance(name: declaration[:name], tenant_id: tenant_id) ||
                         destination.new(declaration[:name], tenant_id: tenant_id)
@@ -69,7 +69,7 @@ module Legion
         @options[:exchange] if @options[:exchange].is_a?(String)
       end
 
-      def publish_envelope_options(options)
+      def publish_envelope_options(options:, **)
         {
           routing_key:      options[:routing_key] || routing_key || '',
           content_type:     options[:content_type] || content_type,
@@ -276,7 +276,7 @@ module Legion
         [destination, declaration, tenant_id]
       end
 
-      def validate_payload_size(payload:)
+      def validate_payload_size(payload:, **)
         limit = self.class.max_payload_bytes
         size = payload.bytesize
         return if size <= limit
@@ -348,7 +348,7 @@ module Legion
                                                 default_affinity
       end
 
-      def spool_publish_result(result:, payload:, envelope:, declaration:, tenant_id:)
+      def spool_publish_result(result:, payload:, envelope:, declaration:, tenant_id:, **)
         return result unless spool_enabled?(@options) && defined?(Legion::Transport::Spool)
 
         persisted = Legion::Transport::Spool.write(

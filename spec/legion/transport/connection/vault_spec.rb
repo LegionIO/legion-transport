@@ -137,10 +137,10 @@ RSpec.describe Legion::Transport::Connection::Vault do
         GC.start(full_mark: true, immediate_sweep: true)
         session.start
         expect(reads).to eq(Array.new(2) { [cert_data[:cert], cert_data[:key], *cert_data[:ca_chain]] })
-        connection.send(:tear_down_session, session)
+        connection.send(:tear_down_session, sess: session)
         expect(paths.none? { |path| File.exist?(path) }).to be(true)
       ensure
-        connection&.send(:tear_down_session, candidate) if candidate
+        connection&.send(:tear_down_session, sess: candidate) if candidate
       end
 
       it 'removes all PEM material after a failed session handshake', :rabbitmq do

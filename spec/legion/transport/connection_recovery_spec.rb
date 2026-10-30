@@ -257,7 +257,7 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       session.instance_variable_set(:@transport, socket)
       allow(session).to receive(:close) { raise 'socket still open' unless socket.closed? }
 
-      connection.send(:tear_down_session, session)
+      connection.send(:tear_down_session, sess: session)
 
       expect(socket).to be_closed
       expect(connection).not_to have_received(:handle_exception)
@@ -269,7 +269,7 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       session.instance_variable_set(:@transport, socket)
       allow(session).to receive(:close).and_raise(IOError, 'broken close')
 
-      connection.send(:tear_down_session, session)
+      connection.send(:tear_down_session, sess: session)
 
       expect(socket).to be_closed
       expect(connection).to have_received(:handle_exception).with(

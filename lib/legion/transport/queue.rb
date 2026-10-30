@@ -27,7 +27,7 @@ module Legion
         else
           merged[:arguments].delete(:'x-dead-letter-exchange')
         end
-        ensure_dlx(merged)
+        ensure_dlx(merged_options: merged)
         result = super(channel, name, merged)
         Legion::Transport::TenantMigration.register_queue(tenant_id: @tenant_id, name: @queue_name_arg,
                                                           options: merged, source_dlx: dlx_name)
@@ -108,7 +108,7 @@ module Legion
         "#{derive_segments.join('.')}.dlx"
       end
 
-      def ensure_dlx(merged_options)
+      def ensure_dlx(merged_options:, **)
         return if merged_options[:passive] || merged_options[:no_declare]
         return if credential_scoping_enabled? && (bootstrap_phase? || !topology_mode?)
 

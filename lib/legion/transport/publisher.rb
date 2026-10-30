@@ -15,7 +15,7 @@ module Legion
       @channel_mutex = Mutex.new
 
       class << self
-        def publish(exchange:, payload:, envelope:, publisher_confirm: false, mandatory: false, confirm_timeout_ms: 5000) # rubocop:disable Metrics/ParameterLists
+        def publish(exchange:, payload:, envelope:, publisher_confirm: false, mandatory: false, confirm_timeout_ms: 5000, **)
           mandatory ||= envelope[:mandatory] == true
           envelope = envelope.merge(mandatory: true) if mandatory
           if defined?(Legion::Transport::InProcess::Exchange) && exchange.is_a?(Legion::Transport::InProcess::Exchange)
@@ -43,13 +43,13 @@ module Legion
           publish_result(exchange: exchange, envelope: envelope, status: :failed).merge(error_class: e.class.name, error: e.message)
         end
 
-        def channel_usable?(channel:)
+        def channel_usable?(channel:, **)
           !channel.nil? && channel.open? && !channel.instance_variable_get(:@legion_publish_retired)
         end
 
         private
 
-        def publish_on_channel(exchange:, payload:, envelope:, reliable:, timeout:)
+        def publish_on_channel(exchange:, payload:, envelope:, reliable:, timeout:, **)
           channel = exchange.channel
           returned = {}
           outgoing = envelope
@@ -67,7 +67,7 @@ module Legion
           publish_result(exchange: exchange, envelope: envelope, status: status).merge(returned.except(:returned))
         end
 
-        def return_envelope(exchange:, envelope:, returned:)
+        def return_envelope(exchange:, envelope:, returned:, **)
           token = SecureRandom.uuid
           exchange.on_return do |return_info, properties, _content|
             headers = properties.respond_to?(:headers) ? properties.headers : properties[:headers]
@@ -80,7 +80,7 @@ module Legion
           envelope.merge(mandatory: true, headers: (envelope[:headers] || {}).merge(RETURN_TOKEN_HEADER => token))
         end
 
-        def wait_for_confirmation(channel:, timeout:)
+        def wait_for_confirmation(channel:, timeout:, **)
           confirmed = Timeout.timeout(timeout, ConfirmTimeout) { channel.wait_for_confirms }
           confirmed == true ? :accepted : :nacked
         rescue Timeout::Error => e
@@ -92,13 +92,13 @@ module Legion
           :confirm_timeout
         end
 
-        def close_timed_out_channel(channel:, timeout:)
+        def close_timed_out_channel(channel:, timeout:, **)
           Timeout.timeout(timeout, ConfirmTimeout) { channel.close if channel.open? }
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'transport.publisher.close_timed_out_channel')
         end
 
-        def publish_result(exchange:, envelope:, status:)
+        def publish_result(exchange:, envelope:, status:, **)
           {
             status:         status,
             accepted:       status == :accepted,

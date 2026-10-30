@@ -14,7 +14,7 @@ module Legion
         CONSTANT_NAME = /\A(?:::)?[A-Z]\w*(?:::[A-Z]\w*)+\z/
 
         class << self
-          def convert(record:)
+          def convert(record:, **)
             raise LegacyRecordError, 'Legacy spool record must be a Hash' unless record.is_a?(Hash)
 
             payload = record[:payload]
@@ -53,7 +53,7 @@ module Legion
 
           private
 
-          def validate_record(record:)
+          def validate_record(record:, **)
             raise LegacyRecordError, 'Legacy spool record is missing its raw payload' unless record.key?(:payload)
             raise LegacyRecordError, 'Legacy spool record is missing its exchange destination' unless record[:exchange].is_a?(String)
             raise LegacyRecordError, 'Legacy spool record is missing its saved routing key' unless record[:routing_key].is_a?(String)
@@ -65,7 +65,7 @@ module Legion
             raise LegacyRecordError, 'Legacy spool exchange type must be a String'
           end
 
-          def saved_envelope(record:, options:)
+          def saved_envelope(record:, options:, **)
             envelope = options.slice(*ENVELOPE_KEYS).merge(record.slice(*ENVELOPE_KEYS))
             headers = [options[:headers], record[:headers]].compact
             raise LegacyRecordError, 'Legacy spool headers must be a Hash' unless headers.all?(Hash)
@@ -75,9 +75,12 @@ module Legion
             envelope
           end
 
-          def destination(record:, options:, tenant_id:)
+          def destination(record:, options:, tenant_id:, **)
             name = record[:exchange]
-            return { name: Legion::Transport::TenantTopology.exchange_name(name, tenant_id: tenant_id), type: 'topic' } unless CONSTANT_NAME.match?(name)
+            unless CONSTANT_NAME.match?(name)
+              return { name: Legion::Transport::TenantTopology.exchange_name(name, tenant_id: tenant_id),
+                       type: 'topic' }
+            end
 
             klass = Object.const_get(name)
             raise LegacyRecordError, "Legacy spool destination #{name} is not an Exchange or Message class" unless klass.is_a?(Class)
@@ -104,7 +107,7 @@ module Legion
             raise LegacyDependencyNotReady, "Legacy spool destination #{name} is not loaded: #{e.message}"
           end
 
-          def declaration(klass:, name:, options:, tenant_id:)
+          def declaration(klass:, name:, options:, tenant_id:, **)
             unless klass.is_a?(Class) && klass <= Legion::Transport::Exchange
               raise LegacyRecordError, 'Legacy spool message does not resolve to an offline Exchange declaration'
             end
@@ -118,7 +121,7 @@ module Legion
             klass.declaration(name: name, tenant_id: tenant_id)
           end
 
-          def encryption_required?(record:, options:, envelope:)
+          def encryption_required?(record:, options:, envelope:, **)
             # The historical writer saved raw payloads even after an encrypted publish
             # failed. An IV is evidence of encryption policy, never reusable wire data.
             return true if [record[:content_encoding], options[:content_encoding]].any? { |value| value.to_s.start_with?('encrypted/') }

@@ -40,7 +40,7 @@ module Legion
           { published: true, routed: !queues.empty?, routing_key: routing_key }
         end
 
-        def subscribe(queue_name, exchange_name: '', &block)
+        def subscribe(queue_name, exchange_name: '', **, &block)
           raise ArgumentError, 'subscriber callback required' unless block
 
           queue = @mutex.synchronize { implicit_queue_state(name: queue_name, exchange_name: exchange_name) }
@@ -49,7 +49,7 @@ module Legion
           { subscribed: true, queue: queue_name, subscription: subscription }
         end
 
-        def declare_queue(name:, owner:)
+        def declare_queue(name:, owner:, **)
           @mutex.synchronize do
             raise IOError, 'local queue owner is closed' unless owner.open?
 
@@ -59,7 +59,7 @@ module Legion
           end
         end
 
-        def bind(queue:, exchange_name:, routing_key:)
+        def bind(queue:, exchange_name:, routing_key:, **)
           @mutex.synchronize do
             ensure_queue!(queue: queue)
             binding = [exchange_name, routing_key]
@@ -67,14 +67,14 @@ module Legion
           end
         end
 
-        def unbind(queue:, exchange_name:, routing_key:)
+        def unbind(queue:, exchange_name:, routing_key:, **)
           @mutex.synchronize do
             ensure_queue!(queue: queue)
             queue.bindings.delete([exchange_name, routing_key])
           end
         end
 
-        def add_subscription(queue:, owner: nil, &callback)
+        def add_subscription(queue:, owner: nil, **, &callback)
           raise ArgumentError, 'subscriber callback required' unless callback
 
           @mutex.synchronize do
@@ -87,7 +87,7 @@ module Legion
           end
         end
 
-        def cancel(subscription:)
+        def cancel(subscription:, **)
           @mutex.synchronize do
             unregister(subscription: subscription)
             await_completion(subscription: subscription)
@@ -95,11 +95,11 @@ module Legion
           true
         end
 
-        def cancelled?(subscription:)
+        def cancelled?(subscription:, **)
           @mutex.synchronize { subscription.callback.nil? }
         end
 
-        def release_owner(owner:)
+        def release_owner(owner:, **)
           @mutex.synchronize do
             subscriptions = []
             @queues.delete_if do |_key, queue|
@@ -114,7 +114,7 @@ module Legion
           true
         end
 
-        def delete_queue(name:)
+        def delete_queue(name:, **)
           @mutex.synchronize do
             queue = @queues.delete([false, name])
             return true unless queue
@@ -125,7 +125,7 @@ module Legion
           true
         end
 
-        def delete_exchange(name:)
+        def delete_exchange(name:, **)
           @mutex.synchronize do
             @queues.each_value { |queue| queue.bindings.reject! { |exchange, _key| exchange == name } }
           end
@@ -136,7 +136,7 @@ module Legion
           @mutex.synchronize { @queues.values.sum { |queue| queue.name == queue_name ? queue.pending.size : 0 } }
         end
 
-        def deliver_pending(queue:)
+        def deliver_pending(queue:, **)
           acquired = @mutex.synchronize do
             next false if queue.draining || queue.pending.empty? || queue.subscribers.empty?
 
@@ -181,40 +181,40 @@ module Legion
 
         private
 
-        def new_queue(name:, implicit: false, exchange_name: nil)
+        def new_queue(name:, implicit: false, exchange_name: nil, **)
           key = implicit ? [true, exchange_name, name] : [false, name]
           QueueState.new(name: name, key: key, pending: [], subscribers: [], owners: [], bindings: [],
                          implicit: implicit, exchange_name: exchange_name)
         end
 
-        def implicit_queue_state(name:, exchange_name:)
+        def implicit_queue_state(name:, exchange_name:, **)
           @queues[[true, exchange_name, name]] ||= new_queue(name: name, implicit: true, exchange_name: exchange_name)
         end
 
-        def ensure_queue!(queue:)
+        def ensure_queue!(queue:, **)
           return if @queues[queue.key].equal?(queue)
 
           raise IOError, 'local queue has been deleted'
         end
 
-        def unregister(subscription:)
+        def unregister(subscription:, **)
           subscription.callback = nil
           subscription.owner = nil
           subscription.queue.subscribers.delete(subscription)
         end
 
-        def await_completion(subscription:)
+        def await_completion(subscription:, **)
           subscription.completed.wait(@mutex) while subscription.running_thread && !subscription.running_thread.equal?(Thread.current)
         end
 
-        def cancel_subscriptions(subscriptions:)
+        def cancel_subscriptions(subscriptions:, **)
           subscriptions.each do |subscription|
             unregister(subscription: subscription)
             await_completion(subscription: subscription)
           end
         end
 
-        def deliver(queue:, subscription:, callback:, message:)
+        def deliver(queue:, subscription:, callback:, message:, **)
           callback.call(message)
         rescue StandardError
           @mutex.synchronize do
@@ -228,7 +228,7 @@ module Legion
           end
         end
 
-        def routes?(queue:, exchange_name:, routing_key:, exchange_type:)
+        def routes?(queue:, exchange_name:, routing_key:, exchange_type:, **)
           return queue.exchange_name == exchange_name && queue.name == routing_key if queue.implicit
           return queue.name == routing_key if exchange_name.empty?
 
@@ -243,7 +243,7 @@ module Legion
           end
         end
 
-        def topic_match?(pattern:, routing_key:)
+        def topic_match?(pattern:, routing_key:, **)
           words = routing_key.empty? ? [] : routing_key.split('.', -1)
           matched = [true] + Array.new(words.size, false)
           (pattern.empty? ? [] : pattern.split('.', -1)).each do |word|
