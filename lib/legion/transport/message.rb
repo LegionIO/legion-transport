@@ -1,15 +1,16 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/settings/task_execution'
 require_relative 'publisher'
 require_relative 'tenant_quota'
+require_relative 'task_envelope'
 
 module Legion
   module Transport
     class Message
       include Legion::Transport::Common
-
-      LEGION_PROTOCOL_VERSION = '2.0'
+      include Legion::Settings::TaskExecution::Helper
 
       class << self
         include Legion::Logging::Helper
@@ -21,10 +22,7 @@ module Legion
       end
 
       def self.max_payload_bytes
-        Legion::Settings[:transport][:max_payload_bytes]
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.message.max_payload_bytes')
-        1_048_576
+        Legion::Transport.settings.fetch(:max_payload_bytes)
       end
 
       def publish(options = nil)
@@ -45,7 +43,7 @@ module Legion
         result = Legion::Transport::Publisher.publish(
           exchange: destination, payload: payload, envelope: envelope,
           publisher_confirm: @options[:publisher_confirm] == true, mandatory: @options[:mandatory] == true,
-          confirm_timeout_ms: @options.fetch(:publish_confirm_timeout_ms, 5000)
+          confirm_timeout_ms: @options.fetch(:publish_confirm_timeout_ms) { task_execution_settings.fetch(:publication).fetch(:publish_confirm_timeout_ms) }
         )
         if result[:status] == :failed
           return spool_publish_result(result: result, payload: payload, envelope: envelope, declaration: declaration, tenant_id: tenant_id)
@@ -63,6 +61,15 @@ module Legion
         spool_publish_result(result: result, payload: payload, envelope: envelope, declaration: declaration, tenant_id: tenant_id)
       ensure
         @options = original_options if original_options
+      end
+
+      def publish!(**options)
+        policy = task_execution_settings.fetch(:publication).merge(@options.slice(*PUBLISH_OPTION_KEYS)).merge(options)
+        result = publish(policy.merge(return_result: true))
+        return result if result.is_a?(Hash) && result[:accepted] == true && result[:status] == :accepted
+
+        result = { accepted: false, status: :failed, error: 'Publisher did not return an accepted result' } unless result.is_a?(Hash)
+        raise Legion::Transport::PublishRejected.new(result: result)
       end
 
       def publish_exchange_name
@@ -110,7 +117,7 @@ module Legion
       end
 
       def app_id
-        @options[:app_id] || 'legion'
+        @options[:app_id] || Legion::Transport.settings.fetch(:messages).fetch(:app_id)
       end
 
       def message_id
@@ -188,7 +195,7 @@ module Legion
           raise Legion::Transport::EncryptionNotReady, 'Message encryption requires a ready cluster secret'
         end
 
-        timeout = Legion::Settings.dig(:crypt, :cluster_secret_timeout) || 5
+        timeout = Legion::Settings.dig(:crypt, :cluster_secret_timeout) || Legion::Transport.settings.fetch(:messages).fetch(:encryption_timeout_seconds)
         unless timeout.is_a?(Numeric) && timeout.finite? && timeout.positive?
           raise Legion::Transport::EncryptionNotReady, 'Cluster secret readiness timeout must be finite and positive'
         end
@@ -211,7 +218,7 @@ module Legion
 
       def headers
         @options[:headers] ||= Concurrent::Hash.new
-        @options[:headers]['legion_protocol_version'] ||= LEGION_PROTOCOL_VERSION
+        @options[:headers]['legion_protocol_version'] ||= Legion::Transport.settings.fetch(:messages).fetch(:protocol_version)
         inject_legion_version_header
         inject_region_header
         inject_legion_region_header
@@ -235,7 +242,7 @@ module Legion
       end
 
       def priority
-        @options[:priority] || Legion::Transport.settings[:messages][:priority] || 0
+        @options[:priority] || Legion::Transport.settings.fetch(:messages).fetch(:priority)
       end
 
       def content_type
@@ -328,7 +335,7 @@ module Legion
         return if region.nil?
 
         @options[:headers]['x-legion-region'] = region
-        affinity = @options[:region_affinity] || 'prefer_local'
+        affinity = @options[:region_affinity] || Legion::Transport.settings.fetch(:messages).fetch(:region_affinity)
         @options[:headers]['x-legion-region-affinity'] = affinity
       end
 
@@ -336,7 +343,7 @@ module Legion
         return unless defined?(Legion::Region) &&
                       Legion::Region.respond_to?(:current)
 
-        default_affinity = (defined?(Legion::Settings) && Legion::Settings.dig(:region, :default_affinity)) || 'prefer_local'
+        default_affinity = Legion::Settings.dig(:region, :default_affinity) || Legion::Transport.settings.fetch(:messages).fetch(:region_affinity)
         explicit_region = defined?(Legion::Settings) ? Legion::Settings.dig(:region, :current) : nil
         return if explicit_region.nil? && default_affinity == 'any'
 

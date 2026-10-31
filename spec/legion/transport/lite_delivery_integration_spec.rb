@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'json'
+require 'legion/json'
 require 'open3'
 require 'rbconfig'
 
 RSpec.describe 'Lite transport wrapper integration' do
   it 'initializes real wrappers, delivers ordered encrypted envelopes, and retires consumers on shutdown' do
     script = <<~RUBY
-      require 'json'
+      require 'legion/json'
       require 'legion/settings'
       Legion::Settings.load
       require 'legion/transport'
@@ -24,6 +24,7 @@ RSpec.describe 'Lite transport wrapper integration' do
       deliveries = []
       consumer = queue.subscribe do |info, properties, payload|
         deliveries << [info.exchange, info.routing_key, properties.content_encoding, properties.headers['iv'], payload]
+        queue.acknowledge(info.delivery_tag)
         exchange.publish('nested', routing_key: 'work.next', **envelope) if payload == 'backlog'
       end
       consumer.cancel
@@ -32,9 +33,9 @@ RSpec.describe 'Lite transport wrapper integration' do
       active_queue = Legion::Transport::Queue.new('integration.active')
       active_consumer = active_queue.subscribe { |_info, _properties, _payload| raise 'unexpected active delivery' }
       connection.shutdown
-      puts ::JSON.generate(deliveries: deliveries, pending_before_shutdown: pending,
-                           pending_after_shutdown: Legion::Transport::Local.queue_depth(queue.name),
-                           cancelled: consumer.cancelled? && active_consumer.cancelled?, channel_closed: !channel.open?)
+      puts Legion::JSON.dump({ deliveries: deliveries, pending_before_shutdown: pending,
+                               pending_after_shutdown: Legion::Transport::Local.queue_depth(queue.name),
+                               cancelled: consumer.cancelled? && active_consumer.cancelled?, channel_closed: !channel.open? })
     RUBY
     root = File.expand_path('../../..', __dir__)
     stdout, stderr, status = Open3.capture3(
@@ -43,7 +44,7 @@ RSpec.describe 'Lite transport wrapper integration' do
     )
 
     expect(status.success?).to be(true), stderr
-    result = JSON.parse(stdout.lines.last, symbolize_names: true)
+    result = Legion::JSON.load(stdout.lines.last)
     expect(result).to eq(
       deliveries:              [
         ['integration.events', 'work.first', 'aes-256-gcm', 'encrypted-iv', 'backlog'],

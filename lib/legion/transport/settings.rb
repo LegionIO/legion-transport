@@ -88,10 +88,14 @@ module Legion
 
       def self.messages
         {
-          encrypt:    ENV['transport.messages.encrypt'] == 'true',
-          ttl:        ENV.fetch('transport.messages.ttl', nil),
-          priority:   ENV['transport.messages.priority'].to_i,
-          persistent: ENV.fetch('transport.messages.persistent', 'true') == 'true'
+          encrypt:                    ENV['transport.messages.encrypt'] == 'true',
+          ttl:                        ENV.fetch('transport.messages.ttl', nil),
+          priority:                   ENV['transport.messages.priority'].to_i,
+          persistent:                 ENV.fetch('transport.messages.persistent', 'true') == 'true',
+          app_id:                     'legion',
+          protocol_version:           '2.0',
+          region_affinity:            'prefer_local',
+          encryption_timeout_seconds: 5
         }
       end
 

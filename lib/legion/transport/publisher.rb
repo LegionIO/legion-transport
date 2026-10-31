@@ -3,11 +3,14 @@
 require 'securerandom'
 require 'timeout'
 require 'legion/logging/helper'
+require 'legion/settings/task_execution'
+require_relative 'errors'
 
 module Legion
   module Transport
     module Publisher
       extend Legion::Logging::Helper
+      extend Legion::Settings::TaskExecution::Helper
 
       RETURN_TOKEN_HEADER = 'x-legion-publish-attempt'
       class ConfirmTimeout < Timeout::Error; end
@@ -15,7 +18,18 @@ module Legion
       @channel_mutex = Mutex.new
 
       class << self
-        def publish(exchange:, payload:, envelope:, publisher_confirm: false, mandatory: false, confirm_timeout_ms: 5000, **)
+        def publish!(exchange:, payload:, envelope:, **options)
+          policy = task_execution_settings.fetch(:publication).merge(options)
+          result = publish(exchange: exchange, payload: payload, envelope: envelope,
+                           publisher_confirm: policy.fetch(:publisher_confirm), mandatory: policy.fetch(:mandatory),
+                           confirm_timeout_ms: policy.fetch(:confirm_timeout_ms) { policy.fetch(:publish_confirm_timeout_ms) })
+          return result if result[:accepted] == true && result[:status] == :accepted
+
+          raise Legion::Transport::PublishRejected.new(result: result)
+        end
+
+        def publish(exchange:, payload:, envelope:, publisher_confirm: false, mandatory: false,
+                    confirm_timeout_ms: task_execution_settings.fetch(:publication).fetch(:publish_confirm_timeout_ms), **)
           mandatory ||= envelope[:mandatory] == true
           envelope = envelope.merge(mandatory: true) if mandatory
           if defined?(Legion::Transport::InProcess::Exchange) && exchange.is_a?(Legion::Transport::InProcess::Exchange)

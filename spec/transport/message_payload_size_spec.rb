@@ -3,10 +3,17 @@
 require 'spec_helper'
 
 RSpec.describe Legion::Transport::Message, 'payload size enforcement' do
+  around do |example|
+    original = Legion::Settings[:transport][:max_payload_bytes]
+    example.run
+  ensure
+    Legion::Settings[:transport][:max_payload_bytes] = original
+  end
+
   context 'when the payload exceeds the limit' do
     it 'raises PayloadTooLarge before any AMQP interaction' do
       msg = described_class.new(data: 'x' * 2_000_000)
-      allow(described_class).to receive(:max_payload_bytes).and_return(100)
+      Legion::Settings[:transport][:max_payload_bytes] = 100
 
       expect { msg.publish }.to raise_error(
         Legion::Transport::PayloadTooLarge,
@@ -16,10 +23,16 @@ RSpec.describe Legion::Transport::Message, 'payload size enforcement' do
 
     it 'includes actual size in the error message' do
       msg = described_class.new(data: 'x' * 200)
-      allow(described_class).to receive(:max_payload_bytes).and_return(50)
+      Legion::Settings[:transport][:max_payload_bytes] = 50
 
       expect { msg.publish }.to raise_error(Legion::Transport::PayloadTooLarge, /bytes/)
     end
+  end
+
+  it 'fails clearly if the configured safety limit is missing instead of silently allowing a larger payload' do
+    Legion::Settings[:transport].delete(:max_payload_bytes)
+    message = described_class.new(data: 'payload', encrypt: false)
+    expect { message.publish! }.to raise_error(KeyError)
   end
 
   context 'when the payload is within the limit' do

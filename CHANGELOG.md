@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
-## [1.4.31] - 2026-10-29
+## [1.4.31] - 2026-10-30
+
+### Added
+- Add strict `Message#publish!` and raw `Publisher.publish!` APIs backed by shared task publication settings; return explicit accepted results or raise `PublishRejected` exposing the original result. Keep legacy non-task publication behavior unchanged and disable duplicate spooling for task outbox handoffs by default.
+- Preserve canonical task lineage, policy identity, typed engine/schema context, attempts, deadlines and schedule metadata across task subclasses and raw-byte retries.
 
 ### Fixed
 - Bound pool checkout with a monotonic deadline that includes connection creation; reserve capacity without holding the pool mutex during network operations, wake waiters on shutdown, and reject late connections.
@@ -23,11 +27,15 @@
 - Quarantine malformed and missing/unroutable-destination spool records without blocking healthy work. Add durable inspect/repair/retry APIs, stable recovery IDs, per-record cross-process ownership, atomic ready-state persistence, and delivered tombstones that prevent stale journal markers from resurrecting completed repairs.
 - Recover historical Dynamic destinations from saved function metadata, scope literal legacy exchanges by the saved tenant, and retry unavailable encryption/extension metadata independently of healthy records. Preserve ciphertext and IV during destination repair.
 - Use Bunny's version-aware acknowledgement/rejection APIs during tenant migration, wait for asynchronous requeue visibility, and preserve structured failures when tenant normalization raises without repeating coercion during logging.
+- Honor shared configurable task stage routes and canonical statuses, reject missing task routes, and route meaningful short templates/structured conditions without string-length bypasses.
+- Implement lite manual acknowledgement, rejection/requeue, redelivery metadata and ownership-safe cancellation/channel recovery. Preserve callback failures as recoverable pending work without claiming delivery or looping synchronously on rejects.
+- Declare Base64 as a direct runtime dependency so standalone consumers can load spool support on Ruby 3.4 and newer without incidental dependencies.
 
 ### Changed
 - Direct `Local.subscribe` uses `exchange_name:` for named exchanges; its default is the default exchange, not an unscoped routing-key subscription.
 - New spool records preserve encoded payload bytes and the full envelope. Historical unversioned records upgrade automatically during replay; capacity exhaustion rejects new writes instead of evicting pending data.
 - Standardize changed keyword-based transport methods with anonymous `**` when extra context is unused, preserve intentional keyword forwarding, and use kwargs for internal helpers without migrating existing application-facing positional APIs.
+- Require `legion-settings >= 1.5.0` for the shared task execution contract; document strict publication and lite-mode durability limits.
 
 ## [1.4.30] - 2026-07-31
 

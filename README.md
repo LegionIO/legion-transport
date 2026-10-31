@@ -95,6 +95,43 @@ Options merge with the message's defaults — you can override `routing_key:` or
 
 Mandatory publishing waits for publisher confirmation before reporting routed acceptance. Confirm waits use Bunny's zero-argument API and retire a timed-out channel so late acknowledgments cannot contaminate the next send. A timeout is an unknown delivery outcome, not proof that the broker rejected the message.
 
+#### Task pipeline publication
+
+Task producers and durable outbox relays use `publish!`, not the legacy `publish` return convention:
+
+```ruby
+message = Legion::Transport::Messages::Task.new(
+  function: 'process_order', routing_key: 'orders.process',
+  task_id: 42, parent_id: 7, master_id: 1,
+  principal_id: 'order-service', principal_type: 'service',
+  args: { order_id: 123 }
+)
+
+begin
+  result = message.publish!(spool: false)
+  # result[:accepted] == true and result[:status] == :accepted
+rescue Legion::Transport::PublishRejected => error
+  # error.result has the original :status, :accepted, destination and error details.
+  # Keep/release the outbox intent for retry; do not acknowledge it as delivered.
+end
+```
+
+`Message#publish!(**options)` and `Publisher.publish!(exchange:, payload:, envelope:, **options)` use `Legion::Settings[:task_execution][:publication]`, provided by `legion-settings >= 1.5.0`. Defaults enable publisher confirmation, mandatory routing and structured results, use a 5000ms confirmation timeout, and disable the secondary disk spool. Constructor options and call options can explicitly override policy; disabling confirmation or mandatory routing weakens the corresponding guarantee. The bang APIs always return a structured accepted result or raise: spooled, unroutable, nacked, failed and ambiguous timeout outcomes are **not** accepted.
+
+The raw `Publisher.publish!` API is for subscription retries: pass the original bytes and full AMQP envelope, including content encoding, IV, message/correlation IDs, and retry headers. It never re-encodes, re-encrypts or spools the payload. The message API continues using the existing Publisher/Spool implementation; ordinary non-task `publish` behavior is unchanged.
+
+Task, SubTask, Dynamic, CheckSubtask and TaskUpdate preserve configured task metadata in both the JSON body and AMQP headers: lineage, identity/tenant/worker policy, engine/schema/options, execution attempts/tokens, depth/deadline, schedule/occurrence and definition version. Business arguments stay under `args`; orchestration values such as `results`, `function_args`, `conditions` and `transformation` remain separate. Headers include `task_protocol_version` from shared settings. An empty or missing task routing key is rejected rather than silently sent to the empty route.
+
+Configure stage routes under `task_execution.routes` (`check_subtask`, `conditioner`, `transform`, `task_update`). CheckSubtask and TaskUpdate always use their configured routes; Task and SubTask retain explicit target routing keys. Nonblank short templates such as `{}` and structured conditions are routed to their stages rather than bypassed by string-length heuristics. TaskUpdate accepts only configured canonical statuses. `Messages::Task` needs no database and supports an explicit exchange/routing key; `Messages::Dynamic` resolves its existing `function_id` through the host's optional Data model.
+
+#### Lite-mode delivery limits
+
+With `LEGION_MODE=lite`, strict publication accepts only a matching declared queue when mandatory routing is enabled. Acceptance means **queued in process memory**, not durable broker storage or successful execution. Restart/session shutdown loses pending work; there are no RabbitMQ durability, priority, TTL or dead-letter guarantees.
+
+Manual consumers must acknowledge successful work. `queue.acknowledge(tag)` removes an outstanding delivery; `queue.reject(tag, requeue: true)` retains the original bytes/properties and marks redelivery. Cancellation and channel closure return unacknowledged work to surviving session-owned queues. `requeue: false` discards it. A synchronous rejection is left pending until subsequent queue activity or a replacement subscription, avoiding a tight retry loop. Callback failures propagate and retain pending work; a failing initial backlog subscription is cancelled so replacement consumers can recover it. Direct `Local.subscribe` retains its automatic-acknowledgement API.
+
+Use the Data task/outbox APIs in the hosting application when crash-durable intent is required. Transport does not depend on Data and does not claim lite publication provides that durability.
+
 ### Spooling and automatic replay
 
 Connection failures can persist the already encoded wire payload, complete AMQP envelope, effective broker destination, and tenant identity. `:spooled` means the disk write succeeded; a full spool or failed write returns `:failed`.

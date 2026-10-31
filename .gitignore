@@ -16,3 +16,4 @@
 legionio.key
 # git worktrees
 .worktrees/
+/.ci-dependencies/

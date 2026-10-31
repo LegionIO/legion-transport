@@ -13,8 +13,10 @@ module Legion
   module Transport
     module Messages
       class TaskUpdate < Legion::Transport::Message
+        include Legion::Transport::TaskEnvelope
+
         def routing_key
-          'task.update'
+          task_route(name: :task_update)
         end
 
         def exchange
@@ -22,10 +24,7 @@ module Legion
         end
 
         def valid_status
-          conditioner = ['conditioner.queued', 'conditioner.failed', 'conditioner.exception']
-          transformer = ['transformer.queued', 'transformer.succeeded', 'transformer.exception']
-          task = ['task.scheduled', 'task.queued', 'task.completed', 'task.exception', 'task.delayed']
-          conditioner + transformer + task
+          task_execution_settings.fetch(:statuses).keys.map { |name| task_status(name: name) }
         end
 
         def validate

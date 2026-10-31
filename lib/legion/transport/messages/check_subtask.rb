@@ -6,6 +6,8 @@ module Legion
   module Transport
     module Messages
       class CheckSubtask < Legion::Transport::Message
+        include Legion::Transport::TaskEnvelope
+
         def exchange
           Legion::Transport::Exchanges::Task
         end
@@ -15,7 +17,7 @@ module Legion
         end
 
         def routing_key
-          'task.subtask.check'
+          task_route(name: :check_subtask)
         end
 
         def validate
