@@ -5,16 +5,17 @@
 ## [1.4.32] - 2026-10-30
 
 ### Added
-- Add strict `Message#publish!` and raw `Publisher.publish!` APIs backed by shared task publication settings; return explicit accepted results or raise `PublishRejected` exposing the original result. Keep legacy non-task publication behavior unchanged and disable duplicate spooling for task outbox handoffs by default.
+- Add strict `Message#publish!` and raw `Publisher.publish!` APIs backed by Transport-owned local `transport.task_publication` policy; return explicit accepted results or raise `PublishRejected` exposing the original result. Keep legacy non-task publication behavior unchanged and disable duplicate spooling for task outbox handoffs by default.
 - Preserve canonical task lineage, policy identity, typed engine/schema context, attempts, deadlines and schedule metadata across task subclasses and raw-byte retries.
+- Own the immutable task wire contract in `Legion::Transport::TaskProtocol`, with status/route lookup and terminal recognition helpers independent of runtime settings, Data and Core.
 
 ### Fixed
-- Honor shared configurable task stage routes and canonical statuses, reject missing task routes, and route meaningful short templates/structured conditions without string-length bypasses.
+- Preserve fixed task stage routes and canonical statuses despite local configuration drift, reject missing task routes, and route meaningful short templates/structured conditions without string-length bypasses.
 - Implement lite manual acknowledgement, rejection/requeue, redelivery metadata and ownership-safe cancellation/channel recovery. Preserve callback failures as recoverable pending work without claiming delivery or looping synchronously on rejects.
 - Declare Base64 as a direct runtime dependency so standalone consumers can load spool support on Ruby 3.4 and newer without incidental dependencies.
 
 ### Changed
-- Require `legion-settings >= 1.5.0` for the shared task execution contract; document strict publication and lite-mode durability limits.
+- Require generic `legion-settings >= 1.4.3`; register Transport defaults against the active loader without resetting live policy, and document local publication policy versus stable wire identities and lite-mode durability limits.
 
 ## [1.4.31] - 2026-10-29
 

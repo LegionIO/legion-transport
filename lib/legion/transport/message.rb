@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
-require 'legion/settings/task_execution'
+require_relative 'settings'
+require_relative 'task_protocol'
 require_relative 'publisher'
 require_relative 'tenant_quota'
 require_relative 'task_envelope'
@@ -10,7 +11,8 @@ module Legion
   module Transport
     class Message
       include Legion::Transport::Common
-      include Legion::Settings::TaskExecution::Helper
+      include Legion::Transport::Settings::Helper
+      include Legion::Transport::TaskProtocol::Helper
 
       class << self
         include Legion::Logging::Helper
@@ -43,7 +45,7 @@ module Legion
         result = Legion::Transport::Publisher.publish(
           exchange: destination, payload: payload, envelope: envelope,
           publisher_confirm: @options[:publisher_confirm] == true, mandatory: @options[:mandatory] == true,
-          confirm_timeout_ms: @options.fetch(:publish_confirm_timeout_ms) { task_execution_settings.fetch(:publication).fetch(:publish_confirm_timeout_ms) }
+          confirm_timeout_ms: @options.fetch(:publish_confirm_timeout_ms) { transport_task_publication_settings.fetch(:publish_confirm_timeout_ms) }
         )
         if result[:status] == :failed
           return spool_publish_result(result: result, payload: payload, envelope: envelope, declaration: declaration, tenant_id: tenant_id)
@@ -64,7 +66,7 @@ module Legion
       end
 
       def publish!(**options)
-        policy = task_execution_settings.fetch(:publication).merge(@options.slice(*PUBLISH_OPTION_KEYS)).merge(options)
+        policy = transport_task_publication_settings.merge(@options.slice(*PUBLISH_OPTION_KEYS)).merge(options)
         result = publish(policy.merge(return_result: true))
         return result if result.is_a?(Hash) && result[:accepted] == true && result[:status] == :accepted
 
@@ -254,7 +256,7 @@ module Legion
       end
 
       def type
-        'task'
+        Legion::Transport::TaskProtocol::MESSAGE_TYPES.fetch(:task)
       end
 
       def timestamp

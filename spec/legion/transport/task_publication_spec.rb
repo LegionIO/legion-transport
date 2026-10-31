@@ -11,11 +11,22 @@ RSpec.describe 'Strict task publication' do
   let(:message) { Legion::Transport::Messages::Task.new(function: 'execute', routing_key: 'jobs.execute', encrypt: false) }
 
   around do |example|
-    original = Legion::Settings[:task_execution]
-    Legion::Settings.loader.settings[:task_execution] = original.merge(routes: original.fetch(:routes).dup, statuses: original.fetch(:statuses).dup)
+    original_loader = Legion::Settings.loader
+    original = original_loader.settings[:task_execution]
+    original_transport = Legion::Settings[:transport]
+    original_loader.settings[:transport] = original_transport.merge(task_publication: original_transport.fetch(:task_publication).dup)
+    original_loader.settings[:task_execution] = {
+      routes: { check_subtask: 'custom.continuation', transform: 'custom.transform', conditioner: 'custom.conditioner', task_update: 'custom.update' },
+      statuses: { completed: 'custom.completed' }, terminal_statuses: [], legacy_terminal_statuses: [],
+      message_types: { task: 'custom.task' }, protocol: { version: 99, metadata_fields: [] },
+      publication: { mandatory: false, publisher_confirm: false, spool: true }
+    }
     example.run
   ensure
-    Legion::Settings.loader.settings[:task_execution] = original
+    Legion::Settings.loader = original_loader
+    original_loader.settings[:task_execution] = original
+    original_loader.settings.delete(:task_execution) if original.nil?
+    original_loader.settings[:transport] = original_transport
   end
 
   before do
@@ -85,18 +96,16 @@ RSpec.describe 'Strict task publication' do
     expect(envelope).not_to have_key(:mandatory)
   end
 
-  it 'uses the configured route rather than an obsolete explicit check-subtask route' do
-    Legion::Settings[:task_execution][:routes][:check_subtask] = 'custom.continuation'
-    queue.bind(exchange, routing_key: 'custom.continuation')
+  it 'uses the canonical continuation route despite obsolete settings and an explicit stale route' do
+    queue.bind(exchange, routing_key: 'task.subtask.check')
     continuation = Legion::Transport::Messages::CheckSubtask.new(task_id: 9, routing_key: 'obsolete.route', encrypt: false)
     allow(continuation).to receive(:exchange).and_return(exchange)
 
-    expect(continuation.publish!).to include(accepted: true, routing_key: 'custom.continuation')
+    expect(continuation.publish!).to include(accepted: true, routing_key: 'task.subtask.check')
   end
 
   it 'preserves typed lineage, policy, transform context and business args across a subtask handoff' do
-    Legion::Settings[:task_execution][:routes][:transform] = 'custom.transform'
-    queue.bind(exchange, routing_key: 'custom.transform')
+    queue.bind(exchange, routing_key: 'task.subtask.transform')
     received = []
     queue.subscribe(manual_ack: false) { |_info, properties, payload| received << [properties, Legion::JSON.load(payload)] }
     metadata = {
@@ -110,10 +119,11 @@ RSpec.describe 'Strict task publication' do
     subtask = Legion::Transport::Messages::SubTask.new(**metadata, transformation: '{}', args: { order_id: 42 }, results: { total: 7 }, encrypt: false)
     allow(subtask).to receive(:exchange).and_return(exchange)
 
-    expect(subtask.publish!).to include(accepted: true, routing_key: 'custom.transform')
+    expect(subtask.publish!).to include(accepted: true, routing_key: 'task.subtask.transform')
     properties, body = received.fetch(0)
     expect(body).to include(metadata.merge(args: { order_id: 42 }, results: { total: 7 }, transformation: '{}'))
-    expect(properties.headers).to include(metadata)
+    expect(properties.headers).to include(metadata.merge(task_protocol_version: 1))
+    expect(properties.type).to eq('task')
     expect(body.fetch(:args)).not_to have_key(:principal_id)
     expect(body).not_to have_key(:encrypt)
   end
@@ -138,23 +148,65 @@ RSpec.describe 'Strict task publication' do
   end
 
   it 'does not bypass a short condition object in favor of a later transformation' do
-    Legion::Settings[:task_execution][:routes][:conditioner] = 'custom.conditioner'
-    queue.bind(exchange, routing_key: 'custom.conditioner')
+    queue.bind(exchange, routing_key: 'task.subtask.conditioner')
     stage = Legion::Transport::Messages::Task.new(function: 'execute', conditions: '{}', transformation: '{}', encrypt: false)
     allow(stage).to receive(:exchange).and_return(exchange)
 
-    expect(stage.publish!).to include(accepted: true, routing_key: 'custom.conditioner')
+    expect(stage.publish!).to include(accepted: true, routing_key: 'task.subtask.conditioner')
   end
 
-  it 'accepts configured task statuses and rejects stale hardcoded status names' do
-    Legion::Settings[:task_execution][:statuses][:completed] = 'custom.completed'
-    Legion::Settings[:task_execution][:routes][:task_update] = 'custom.update'
-    queue.bind(exchange, routing_key: 'custom.update')
-    update = Legion::Transport::Messages::TaskUpdate.new(task_id: 9, status: 'custom.completed', encrypt: false)
+  it 'publishes and recognizes canonical completion despite obsolete status and terminal overrides' do
+    queue.bind(exchange, routing_key: 'task.update')
+    received = []
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << Legion::JSON.load(payload) }
+    update = Legion::Transport::Messages::TaskUpdate.new(task_id: 9, status: 'task.completed', encrypt: false)
     allow(update).to receive(:exchange).and_return(exchange)
 
-    expect(update.publish!).to include(accepted: true, routing_key: 'custom.update')
-    expect { Legion::Transport::Messages::TaskUpdate.new(task_id: 9, status: 'task.completed') }.to raise_error(Legion::Exception::InvalidTaskStatus)
+    expect(update.publish!).to include(accepted: true, routing_key: 'task.update')
+    expect(update.task_terminal_status?(status: received.fetch(0).fetch(:status))).to be(true)
+    expect(update.task_terminal_status?(status: 'complete')).to be(true)
+    expect(update.task_terminal_status?(status: 'task.running')).to be(false)
+    expect { Legion::Transport::Messages::TaskUpdate.new(task_id: 9, status: 'custom.completed') }.to raise_error(Legion::Exception::InvalidTaskStatus)
+  end
+
+  it 'applies live local mandatory policy to message and raw publishing without resetting it' do
+    Legion::Settings[:transport][:task_publication][:mandatory] = false
+    expect(message.publish!).to include(accepted: true)
+    expect(Legion::Transport::Publisher.publish!(exchange: exchange, payload: 'raw', envelope: { routing_key: 'missing' })).to include(accepted: true)
+
+    Legion::Settings[:transport][:task_publication][:mandatory] = true
+    expect { message.publish! }.to raise_error(Legion::Transport::PublishRejected)
+    expect do
+      Legion::Transport::Publisher.publish!(exchange: exchange, payload: 'raw', envelope: { routing_key: 'missing' })
+    end.to raise_error(Legion::Transport::PublishRejected)
+  end
+
+  it 'recovers owned defaults after loader replacement while preserving local policy and live connection state' do
+    replacement = Legion::Settings::Loader.new
+    replacement.settings[:transport] = { task_publication: { mandatory: false }, connected: true }
+    Legion::Settings.loader = replacement
+
+    expect(message.publish!).to include(accepted: true)
+    expect(Legion::Settings[:transport][:connected]).to be(true)
+    Legion::Settings[:transport][:task_publication][:mandatory] = true
+    expect { message.publish! }.to raise_error(Legion::Transport::PublishRejected)
+    expect(Legion::Settings[:transport][:connected]).to be(true)
+  end
+
+  it 'rejects malformed local publication policy before queuing work' do
+    queue.bind(exchange, routing_key: 'jobs.execute')
+    Legion::Settings[:transport][:task_publication][:mandatory] = 'false'
+
+    expect { message.publish! }.to raise_error(Legion::Transport::Settings::ConfigurationError)
+    expect(Legion::Transport::Local.queue_depth(queue.name)).to eq(0)
+  end
+
+  it 'rejects a nonpositive confirmation timeout before queuing work' do
+    queue.bind(exchange, routing_key: 'jobs.execute')
+    Legion::Settings[:transport][:task_publication][:publish_confirm_timeout_ms] = 0
+
+    expect { message.publish! }.to raise_error(Legion::Transport::Settings::ConfigurationError)
+    expect(Legion::Transport::Local.queue_depth(queue.name)).to eq(0)
   end
 
   it 'keeps legacy non-task publication return behavior unchanged' do

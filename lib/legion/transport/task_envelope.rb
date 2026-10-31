@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative 'task_protocol'
+
 module Legion
   module Transport
     module TaskEnvelope
@@ -10,7 +12,7 @@ module Legion
       def headers
         metadata = task_metadata
         super.except(*metadata.keys.map(&:to_s), 'task_protocol_version')
-             .merge(metadata).merge(task_protocol_version: task_execution_settings.fetch(:protocol).fetch(:version))
+             .merge(metadata).merge(task_protocol_version: Legion::Transport::TaskProtocol::VERSION)
       end
 
       def publish_envelope_options(options:, **)
@@ -23,8 +25,7 @@ module Legion
       private
 
       def task_metadata
-        fields = task_execution_settings.fetch(:protocol).fetch(:metadata_fields).map(&:to_sym)
-        @options.slice(*fields)
+        @options.slice(*Legion::Transport::TaskProtocol::METADATA_FIELDS)
       end
 
       def task_stage_present?(value:, **)

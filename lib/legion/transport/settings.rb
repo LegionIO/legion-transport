@@ -9,11 +9,33 @@ module Legion
     module Settings
       extend Legion::Logging::Helper
 
+      class ConfigurationError < ArgumentError; end
+
+      module Helper
+        def transport_task_publication_settings
+          Legion::Settings.register_library(:transport, Legion::Transport::Settings.default) unless Legion::Settings.loader&.merged_modules&.key?(:transport)
+          policy = Legion::Settings[:transport][:task_publication]
+          raise ConfigurationError, 'transport.task_publication must be a Hash' unless policy.is_a?(Hash)
+
+          %i[publisher_confirm mandatory return_result spool].each do |key|
+            next if [true, false].include?(policy[key])
+
+            raise ConfigurationError, "transport.task_publication.#{key} must be true or false"
+          end
+          timeout = policy[:publish_confirm_timeout_ms]
+          unless timeout.is_a?(Integer) && timeout.positive?
+            raise ConfigurationError, 'transport.task_publication.publish_confirm_timeout_ms must be a positive Integer'
+          end
+
+          policy
+        end
+      end
+
       def self.connection
         host = ENV['transport.connection.host'] || '127.0.0.1'
         port = (ENV['transport.connection.port'] || DEFAULT_AMQP_PORT).to_i
 
-        existing = Legion::Settings[:transport][:connection] || {}
+        existing = Legion::Settings.dig(:transport, :connection) || {}
         extra_server  = existing[:server]
         extra_servers = existing[:servers] || []
         extra_hosts   = existing[:hosts] || []
@@ -125,6 +147,9 @@ module Legion
           connected:            false,
           logger_level:         resolve_log_level,
           messages:             messages,
+          task_publication:     {
+            publisher_confirm: true, mandatory: true, return_result: true, publish_confirm_timeout_ms: 5000, spool: false
+          },
           prefetch:             ENV.fetch('transport.prefetch', '2').to_i,
           exchanges:            exchanges,
           queues:               queues,
@@ -149,7 +174,7 @@ module Legion
 end
 
 begin
-  Legion::Settings.merge_settings('transport', Legion::Transport::Settings.default)
+  Legion::Settings.register_library(:transport, Legion::Transport::Settings.default)
 rescue StandardError => e
-  Legion::Transport::Settings.handle_exception(e, level: :fatal, handled: true, operation: 'transport.settings.merge')
+  Legion::Transport::Settings.handle_exception(e, level: :fatal, handled: true, operation: 'transport.settings.register')
 end

@@ -7,12 +7,11 @@ module Legion::Transport::Messages # rubocop:disable Style/ClassAndModuleChildre
     attr_accessor :options
 
     def type
-      'task'
+      Legion::Transport::TaskProtocol::MESSAGE_TYPES.fetch(:task)
     end
 
     def message
-      fields = task_execution_settings.fetch(:protocol).fetch(:metadata_fields).map(&:to_sym)
-      args = @options.key?(:args) ? @options[:args] : @options.except(*ENVELOPE_KEYS, *fields)
+      args = @options.key?(:args) ? @options[:args] : @options.except(*ENVELOPE_KEYS, *Legion::Transport::TaskProtocol::METADATA_FIELDS)
       super.merge(args: args, function: function.values[:name])
     end
 

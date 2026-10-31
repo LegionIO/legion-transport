@@ -23,13 +23,9 @@ module Legion
           Legion::Transport::Exchanges::Task
         end
 
-        def valid_status
-          task_execution_settings.fetch(:statuses).keys.map { |name| task_status(name: name) }
-        end
-
         def validate
           raise Legion::Exception::InvalidTaskId unless @options[:task_id].is_a?(Integer) && @options[:task_id].positive?
-          raise Legion::Exception::InvalidTaskStatus unless valid_status.include?(@options[:status])
+          raise Legion::Exception::InvalidTaskStatus unless Legion::Transport::TaskProtocol::STATUSES.value?(@options[:status])
 
           @valid = true
         end
