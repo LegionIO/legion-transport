@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [1.4.31] - 2026-10-29
+
+### Fixed
+- Bound pool checkout with a monotonic deadline that includes connection creation; reserve capacity without holding the pool mutex during network operations, wake waiters on shutdown, and reject late connections.
+- Bound connection shutdown across pooled, publisher, log, and build sessions with one five-second deadline; disable recovery, close sockets, and stop old consumer workers before replacing sessions.
+- Keep forced reconnect exclusive to its owning caller and restore existing queue, channel, and consumer references, bindings, and QoS before notifying reconnect callbacks.
+- Reuse and track thread-local publisher channels in pool mode; preserve publisher caches across repeated forced reconnects without accumulating log channels.
+- Start each Bunny session inside its host failover attempt and clean up failed handshakes before advancing to the next host. Fixes #41.
+- Bound recovery snapshot lock acquisition and invalidate the complete reconnect generation on shutdown; cancelled owners cannot reopen transport or disturb a newer session. Stop legacy Bunny readers before intentional socket closure to avoid asynchronous owner-thread errors.
+- Use the supported zero-argument Bunny confirm API with bounded waits, retain Vault PEM owners for the session/recovery lifetime, and keep DLX cleanup failures from masking declaration failures. Fixes #42.
+- Support the common lite-mode channel factory contract, ordered pending-only delivery outside global locks, exchange-scoped direct/topic/fanout routing, and atomic consumer cancellation with session-owned cleanup. Fixes #43.
+- Apply tenant naming at real declaration/binding/DLX boundaries, scope exchange caches by tenant and declaration context, align provisioning with actual resources, and enforce encoded-byte quotas in message/helper publishing and replay. Fixes #44.
+- Correlate mandatory returns on exchanges, retire ambiguous confirm-timeout channels, persist only successful spool writes, and replay claimed wire records asynchronously after connection recovery with at-least-once confirmation semantics.
+- Preserve existing queues, bindings, and DLQ contents on declaration mismatches; surface required DLX failures, report actual HTTP publish outcomes, and default to persistent messages with prefetch 2 while retaining explicit false/zero overrides. Fixes #45.
+- Fail closed when requested encryption is not ready, bound encryption attempts, retain cipher/IV metadata in spool replay, and preserve explicit plaintext and bootstrap exceptions. Fixes #46.
+- Automatically upgrade historical raw JSONL spool records to durable wire envelopes before replay; preserve routing, tenant, encryption intent and false/zero metadata, replace stale IVs, and reuse stored ciphertext across interrupted replay. Retry key readiness and late-loaded exchange classes without a manual trigger. Retain original data on failed or interrupted conversion and hold file ownership across atomic replacement.
+- Keep spool claim cleanup safe when shutdown interrupts draining or conversion before the progress offset or original handle is initialized.
+- Complete tenant queue and DLQ data migration with explicit/registered manifests, nonmutating plans, exclusive source locks, tenant-conflict checks, byte-preserving routed confirmation before source acknowledgement, bounded resumable progress, and an authenticated-host HTTP endpoint.
+- Quarantine malformed and missing/unroutable-destination spool records without blocking healthy work. Add durable inspect/repair/retry APIs, stable recovery IDs, per-record cross-process ownership, atomic ready-state persistence, and delivered tombstones that prevent stale journal markers from resurrecting completed repairs.
+- Recover historical Dynamic destinations from saved function metadata, scope literal legacy exchanges by the saved tenant, and retry unavailable encryption/extension metadata independently of healthy records. Preserve ciphertext and IV during destination repair.
+- Use Bunny's version-aware acknowledgement/rejection APIs during tenant migration, wait for asynchronous requeue visibility, and preserve structured failures when tenant normalization raises without repeating coercion during logging.
+
+### Changed
+- Direct `Local.subscribe` uses `exchange_name:` for named exchanges; its default is the default exchange, not an unscoped routing-key subscription.
+- New spool records preserve encoded payload bytes and the full envelope. Historical unversioned records upgrade automatically during replay; capacity exhaustion rejects new writes instead of evicting pending data.
+- Standardize changed keyword-based transport methods with anonymous `**` when extra context is unused, preserve intentional keyword forwarding, and use kwargs for internal helpers without migrating existing application-facing positional APIs.
+
 ## [1.4.30] - 2026-07-31
 
 ### Fixed

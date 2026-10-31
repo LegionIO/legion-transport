@@ -4,94 +4,98 @@ require 'spec_helper'
 require 'tmpdir'
 require 'fileutils'
 
-RSpec.describe Legion::Transport::Spool, 'limits and envelope (#19)' do
+RSpec.describe Legion::Transport::Spool, 'capacity and wire envelopes' do
   let(:spool_dir) { Dir.mktmpdir('legion-spool-limits') }
 
   before do
     described_class.reset!
-    described_class.setup(directory: spool_dir, max_file_bytes: 10_485_760, max_total_bytes: 512,
-                          max_files: 100, max_age_seconds: 259_200)
+    described_class.setup(directory: spool_dir)
   end
 
-  after { FileUtils.rm_rf(spool_dir) }
-
-  describe 'max_total_bytes enforcement' do
-    it 'evicts oldest files when total bytes exceeds max_total_bytes' do
-      # Write enough data to exceed the 512-byte limit across multiple files
-      15.times do |i|
-        described_class.write(exchange: 'task', routing_key: 'test', payload: { data: 'x' * 50, index: i })
-      end
-
-      total = Dir.glob(File.join(spool_dir, '*.jsonl')).sum { |f| File.size(f) }
-      expect(total).to be <= 512 * 2
-    end
+  after do
+    described_class.reset!
+    FileUtils.rm_rf(spool_dir)
   end
 
-  describe 'spool envelope preservation' do
-    it 'preserves headers in spooled message' do
-      described_class.reset!
-      described_class.setup(directory: spool_dir)
-      described_class.write(
-        exchange:    'task',
-        routing_key: 'test.run',
-        payload:     { foo: 'bar' },
-        headers:     { 'x-priority' => 5, 'legion_protocol_version' => '2.0' }
-      )
-
-      messages = []
-      described_class.drain { |msg| messages << msg }
-      expect(messages.first[:headers]).to eq({ 'x-priority': 5, legion_protocol_version: '2.0' })
+  def drain_payloads
+    payloads = []
+    described_class.drain do |record|
+      payloads << record[:payload]
+      true
     end
-
-    it 'preserves priority in spooled message' do
-      described_class.reset!
-      described_class.setup(directory: spool_dir)
-      described_class.write(exchange: 'task', routing_key: 'test.run', payload: { foo: 'bar' }, priority: 10)
-
-      messages = []
-      described_class.drain { |msg| messages << msg }
-      expect(messages.first[:priority]).to eq(10)
-    end
-
-    it 'preserves message_id in spooled message' do
-      described_class.reset!
-      described_class.setup(directory: spool_dir)
-      described_class.write(exchange: 'task', routing_key: 'test.run', payload: {}, message_id: 'abc-123')
-
-      messages = []
-      described_class.drain { |msg| messages << msg }
-      expect(messages.first[:message_id]).to eq('abc-123')
-    end
-
-    it 'preserves correlation_id in spooled message' do
-      described_class.reset!
-      described_class.setup(directory: spool_dir)
-      described_class.write(exchange: 'task', routing_key: 'test.run', payload: {}, correlation_id: 'corr-456')
-
-      messages = []
-      described_class.drain { |msg| messages << msg }
-      expect(messages.first[:correlation_id]).to eq('corr-456')
-    end
-
-    it 'preserves persistent flag in spooled message' do
-      described_class.reset!
-      described_class.setup(directory: spool_dir)
-      described_class.write(exchange: 'task', routing_key: 'test.run', payload: {}, persistent: true)
-
-      messages = []
-      described_class.drain { |msg| messages << msg }
-      expect(messages.first[:persistent]).to be true
-    end
+    payloads
   end
 
-  describe 'streaming count and drain' do
-    it 'count does not load full file into memory (uses line streaming)' do
-      described_class.reset!
-      described_class.setup(directory: spool_dir)
-      5.times { |i| described_class.write(exchange: 'task', routing_key: 'test', payload: { i: i }) }
+  it 'rejects new records at the file limit without evicting previously persisted work' do
+    described_class.setup(directory: spool_dir, max_file_bytes: 1, max_files: 2)
+    %w[first second].each { |payload| described_class.write(exchange: 'task', routing_key: 'run', payload: payload) }
+    expect do
+      described_class.write(exchange: 'task', routing_key: 'run', payload: 'third')
+    end.to raise_error(described_class::CapacityExceededError)
+    expect(drain_payloads).to eq(%w[first second])
+  end
 
-      expect(File).not_to receive(:readlines)
-      expect(described_class.count).to eq(5)
+  it 'checks prospective encoded record bytes before an append exceeds the total limit' do
+    described_class.write(exchange: 'task', routing_key: 'run', payload: 'same')
+    record_size = Dir.glob(File.join(spool_dir, '*.jsonl')).sum { |file| File.size(file) }
+    described_class.setup(directory: spool_dir, max_total_bytes: record_size * 2)
+    described_class.write(exchange: 'task', routing_key: 'run', payload: 'same')
+    expect do
+      described_class.write(exchange: 'task', routing_key: 'run', payload: 'same')
+    end.to raise_error(described_class::CapacityExceededError)
+    expect(Dir.glob(File.join(spool_dir, '*.jsonl')).sum { |file| File.size(file) }).to eq(record_size * 2)
+    expect(drain_payloads).to eq(%w[same same])
+  end
+
+  it 'includes claimed records in capacity and never evicts a claim during its callback' do
+    described_class.setup(directory: spool_dir, max_files: 1, max_age_seconds: 1)
+    described_class.write(exchange: 'task', routing_key: 'run', payload: 'pending')
+    Dir.glob(File.join(spool_dir, '*.jsonl')).each { |file| FileUtils.touch(file, mtime: Time.now - 60) }
+    described_class.drain do |_record|
+      described_class.evict_stale
+      expect do
+        described_class.write(exchange: 'task', routing_key: 'run', payload: 'would evict')
+      end.to raise_error(described_class::CapacityExceededError)
+      false
     end
+    expect(drain_payloads).to eq(['pending'])
+  end
+
+  it 'expires only sealed unclaimed files, not the active writer file' do
+    described_class.setup(directory: spool_dir, max_file_bytes: 1, max_age_seconds: 1)
+    %w[sealed active].each { |payload| described_class.write(exchange: 'task', routing_key: 'run', payload: payload) }
+    Dir.glob(File.join(spool_dir, '*.jsonl')).each { |file| FileUtils.touch(file, mtime: Time.now - 60) }
+    described_class.evict_stale
+    expect(drain_payloads).to eq(['active'])
+  end
+
+  it 'round-trips the full AMQP envelope, tenant, destination type and encrypted wire bytes' do
+    envelope = {
+      headers:          { iv: 'original-iv', 'x-priority': 5 },
+      content_type:     'application/json',
+      content_encoding: 'encrypted/cs',
+      priority:         10,
+      message_id:       'message-123',
+      correlation_id:   'correlation-456',
+      persistent:       false,
+      expiration:       '3000',
+      app_id:           'legion',
+      user_id:          'publisher',
+      reply_to:         'reply.queue',
+      type:             'task',
+      timestamp:        1_700_000_000,
+      mandatory:        true
+    }
+    payload = "\x00\xFFciphertext".b
+    described_class.write(exchange: 't.alpha.task', exchange_type: 'direct', tenant_id: 'alpha',
+                          routing_key: 'test.run', payload: payload, **envelope)
+    records = []
+    described_class.drain do |record|
+      records << record
+      true
+    end
+
+    expect(records).to contain_exactly(include(exchange: 't.alpha.task', exchange_type: 'direct', tenant_id: 'alpha',
+                                               payload: payload, envelope: envelope.merge(routing_key: 'test.run')))
   end
 end

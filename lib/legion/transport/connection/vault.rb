@@ -11,22 +11,25 @@ module Legion
 
         # Provides Vault PKI-based cert issuance for Bunny mTLS connections.
         # Activated when `transport.tls.vault_pki: true` AND `Legion::Crypt::Mtls.enabled?`.
-        # Bunny requires file paths for TLS material, so we write to tempfiles (auto-deleted
-        # by the OS when the process exits — or call cleanup_pki_tempfiles explicitly).
+        # Keep PEM owners alive until their session is retired, including native recovery.
 
-        def vault_pki_tls_options
+        def vault_pki_tls_options(tempfiles: nil, **)
           return {} unless vault_pki_enabled?
           return {} unless defined?(Legion::Crypt::Mtls)
           return {} unless Legion::Crypt::Mtls.enabled?
 
+          created_files = []
           node_name = pki_node_name
           cert_data = Legion::Crypt::Mtls.issue_cert(common_name: node_name)
           Legion::Transport.logger.info(
             "[mTLS] Issued PKI cert for #{node_name}: serial=#{cert_data[:serial]} expiry=#{cert_data[:expiry]}"
           )
 
-          build_bunny_tls_opts(cert_data)
+          options = build_bunny_tls_opts(cert_data: cert_data, tempfiles: created_files)
+          (tempfiles || (@pki_tempfiles ||= [])).concat(created_files)
+          options
         rescue StandardError => e
+          cleanup_pki_tempfiles(tempfiles: created_files)
           handle_exception(e, level: :warn, handled: true, operation: 'transport.connection.vault_pki_tls_options')
           {}
         end
@@ -43,14 +46,12 @@ module Legion
 
         private
 
-        def build_bunny_tls_opts(cert_data)
-          cert_file = write_pki_tempfile('legion-cert-', '.pem', cert_data[:cert])
-          key_file  = write_pki_tempfile('legion-key-',  '.pem', cert_data[:key])
-          ca_files  = Array(cert_data[:ca_chain]).map.with_index do |pem, i|
-            write_pki_tempfile("legion-ca-#{i}-", '.pem', pem)
+        def build_bunny_tls_opts(cert_data:, tempfiles:, **)
+          cert_file = write_pki_tempfile(prefix: 'legion-cert-', content: cert_data[:cert], tempfiles: tempfiles)
+          key_file = write_pki_tempfile(prefix: 'legion-key-', content: cert_data[:key], tempfiles: tempfiles)
+          ca_files = Array(cert_data[:ca_chain]).map.with_index do |pem, i|
+            write_pki_tempfile(prefix: "legion-ca-#{i}-", content: pem, tempfiles: tempfiles)
           end
-
-          track_pki_tempfiles([cert_file, key_file] + ca_files)
 
           {
             tls:                 true,
@@ -61,17 +62,21 @@ module Legion
           }
         end
 
-        def write_pki_tempfile(prefix, suffix, content)
-          f = Tempfile.new([prefix, suffix])
-          f.write(content)
-          f.flush
-          f.close
-          f.path
+        def write_pki_tempfile(prefix:, content:, tempfiles:, **)
+          file = Tempfile.new([prefix, '.pem'])
+          tempfiles << file
+          file.write(content)
+          file.close
+          file.path
         end
 
-        def track_pki_tempfiles(paths)
-          @pki_tempfiles ||= []
-          @pki_tempfiles.concat(paths)
+        def cleanup_pki_tempfiles(tempfiles: @pki_tempfiles, **)
+          tempfiles&.each do |file|
+            file.close!
+          rescue StandardError => e
+            handle_exception(e, level: :warn, handled: true, operation: 'transport.connection.cleanup_pki_tempfiles')
+          end
+          tempfiles&.clear
         end
 
         def pki_node_name

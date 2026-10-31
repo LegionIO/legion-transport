@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'stringio'
 
 RSpec.describe Legion::Transport::Connection, 'cluster node rotation', :rabbitmq do
   before do
@@ -44,62 +45,68 @@ RSpec.describe Legion::Transport::Connection, 'cluster node rotation', :rabbitmq
   end
 end
 
-RSpec.describe Legion::Transport::Connection, 'failover', :rabbitmq do
+RSpec.describe Legion::Transport::Connection, 'failover' do
+  let(:connection) do
+    described_class.clone.tap do |copy|
+      copy.instance_variables.each { |name| copy.remove_instance_variable(name) }
+    end
+  end
+  let(:hosts) { [{ host: 'unreachable', port: 5672 }, { host: 'available', port: 5673 }] }
+  let(:failed) { instance_double(Bunny::Session, close: nil) }
+  let(:available) { instance_double(Bunny::Session, start: nil) }
+
   before do
-    described_class.instance_variable_set(:@session, nil)
-    described_class.instance_variable_set(:@channel_thread, Concurrent::ThreadLocalVar.new(nil))
+    allow(connection).to receive(:build_bunny_opts).and_return(hosts: hosts)
+    allow(connection).to receive(:handle_exception)
   end
 
-  describe '#create_session_with_failover' do
-    it 'returns a Bunny session on successful connection' do
-      session = instance_double(Bunny::Session)
-      allow(Bunny).to receive(:new).and_return(session)
-      result = described_class.send(:create_session_with_failover, connection_name: 'test')
-      expect(result).to eq session
+  it 'starts the next host when the first session fails during its handshake' do
+    socket = StringIO.new
+    failed.instance_variable_set(:@transport, socket)
+    allow(Bunny).to receive(:new).with(hosts.first).and_return(failed)
+    allow(Bunny).to receive(:new).with(hosts.last).and_return(available)
+    allow(failed).to receive(:start).and_raise(Bunny::TCPConnectionFailed, 'refused')
+    allow(available).to receive(:start) { raise 'failed socket leaked' unless socket.closed? }
+
+    expect(connection.send(:create_session_with_failover, connection_name: 'test')).to eq(available)
+    expect(available).to have_received(:start)
+    expect(socket).to be_closed
+  end
+
+  it 'advances after a constructor failure as well as a start failure' do
+    allow(Bunny).to receive(:new).with(hosts.first).and_raise(Bunny::TCPConnectionFailed, 'refused')
+    allow(Bunny).to receive(:new).with(hosts.last).and_return(available)
+
+    expect(connection.send(:create_session_with_failover, connection_name: 'test')).to eq(available)
+    expect(available).to have_received(:start)
+  end
+
+  it 'closes each failed session before reporting cluster exhaustion' do
+    sessions = hosts.map { instance_double(Bunny::Session, close: nil) }
+    sockets = sessions.map do |session|
+      StringIO.new.tap { |socket| session.instance_variable_set(:@transport, socket) }
+    end
+    hosts.zip(sessions).each do |host, session|
+      allow(Bunny).to receive(:new).with(host).and_return(session)
+      allow(session).to receive(:start).and_raise(IOError, 'handshake failed')
     end
 
-    it 'tries next host on TCPConnectionFailed' do
-      Legion::Settings[:transport][:cluster_nodes] = ['rmq2:5672']
-      instance_double(Bunny::Session)
-      good_session = instance_double(Bunny::Session)
+    expect do
+      connection.send(:create_session_with_failover, connection_name: 'test')
+    end.to raise_error(Legion::Transport::ClusterUnavailable)
+    expect(sockets).to all(be_closed)
+  end
 
-      call_count = 0
-      allow(Bunny).to receive(:new) do
-        call_count += 1
-        raise Bunny::TCPConnectionFailed, 'Connection refused' if call_count == 1
+  it 'cleans up an interrupted handshake without treating pool expiry as host failure' do
+    socket = StringIO.new
+    failed.instance_variable_set(:@transport, socket)
+    allow(Bunny).to receive(:new).with(hosts.first).and_return(failed)
+    allow(failed).to receive(:start).and_raise(Legion::Transport::PoolTimeout, 'checkout expired')
+    expect(Bunny).not_to receive(:new).with(hosts.last)
 
-        good_session
-      end
-
-      result = described_class.send(:create_session_with_failover, connection_name: 'test')
-      expect(result).to eq good_session
-      Legion::Settings[:transport][:cluster_nodes] = []
-    end
-
-    it 'raises ClusterUnavailable when all nodes fail' do
-      allow(Bunny).to receive(:new).and_raise(Bunny::TCPConnectionFailed, 'refused')
-
-      expect do
-        described_class.send(:create_session_with_failover, connection_name: 'test')
-      end.to raise_error(Legion::Transport::ClusterUnavailable)
-    end
-
-    it 'logs warnings for each failed attempt' do
-      Legion::Settings[:transport][:cluster_nodes] = ['rmq2:5672']
-      allow(Bunny).to receive(:new).and_raise(Bunny::TCPConnectionFailed, 'refused')
-      allow(described_class).to receive(:handle_exception).and_call_original
-
-      begin
-        described_class.send(:create_session_with_failover, connection_name: 'test')
-      rescue Legion::Transport::ClusterUnavailable
-        nil
-      end
-
-      expect(described_class).to have_received(:handle_exception).at_least(:once).with(
-        instance_of(Bunny::TCPConnectionFailed),
-        hash_including(level: :warn, handled: true, operation: 'transport.connection.create_session')
-      )
-      Legion::Settings[:transport][:cluster_nodes] = []
-    end
+    expect do
+      connection.send(:create_session_with_failover, connection_name: 'test')
+    end.to raise_error(Legion::Transport::PoolTimeout)
+    expect(socket).to be_closed
   end
 end

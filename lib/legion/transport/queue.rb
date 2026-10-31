@@ -1,36 +1,60 @@
 # frozen_string_literal: true
 
+require_relative 'tenant_topology'
+require_relative 'tenant_migration'
+
 module Legion
   module Transport
     class Queue < Legion::Transport::CONNECTOR::Queue
       include Legion::Transport::Common
 
-      def initialize(queue = queue_name, options = {})
-        retries ||= 0
-        @queue_name_arg = queue
-        @options = options
-        merged = options_builder(default_options, queue_options, options)
-        ensure_dlx(merged)
-        super(channel, queue, merged)
-      rescue Legion::Transport::CONNECTOR::PreconditionFailed => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.queue.initialize', queue: queue)
-        identity_resolved = defined?(Legion::Identity::Process) && Legion::Identity::Process.resolved?
-        raise if credential_scoping_enabled? && (bootstrap_phase? || (!topology_mode? && identity_resolved && !own_queue?))
+      attr_reader :tenant_id
 
-        retries.zero? ? retries = 1 : raise
-        recreate_queue(queue)
-        safely_close_channel(@channel)
-        @channel = Legion::Transport::Connection.channel
-        retry
+      def initialize(queue = nil, options = {}, **kwargs)
+        options = options.merge(kwargs) unless kwargs.empty?
+        @options = options.dup
+        @explicit_channel = @options.delete(:channel)
+        @channel = @explicit_channel if @explicit_channel
+        @tenant_id = Legion::Transport::TenantTopology.resolve_tenant_id(tenant_id: @options.delete(:tenant_id))
+        @queue_name_arg = queue || queue_name
+        name = Legion::Transport::TenantTopology.queue_name(@queue_name_arg, tenant_id: @tenant_id)
+        merged = options_builder(default_options, queue_options, @options)
+        merged[:arguments] = (merged[:arguments] || {}).to_h { |key, value| [key.to_sym, value] }
+        dlx_name = merged[:arguments][:'x-dead-letter-exchange']
+        if dlx_name
+          merged[:arguments][:'x-dead-letter-exchange'] =
+            Legion::Transport::TenantTopology.exchange_name(dlx_name, tenant_id: @tenant_id)
+        else
+          merged[:arguments].delete(:'x-dead-letter-exchange')
+        end
+        ensure_dlx(merged_options: merged)
+        result = super(channel, name, merged)
+        Legion::Transport::TenantMigration.register_queue(tenant_id: @tenant_id, name: @queue_name_arg,
+                                                          options: merged, source_dlx: dlx_name)
+        result
+      rescue Legion::Transport::CONNECTOR::PreconditionFailed => e
+        handle_exception(e, level: :warn, handled: false, operation: 'transport.queue.initialize', queue: name,
+                         detail: 'Declaration failed; existing queue and messages were preserved. Reconcile broker options explicitly.')
+        safely_close_channel(@channel) unless @explicit_channel
+        raise
       end
 
-      def recreate_queue(queue)
-        log.warn "Queue:#{queue} exists with wrong parameters, deleting and creating"
-        tmp_channel = Legion::Transport::Connection.channel
-        tmp_queue = ::Bunny::Queue.new(tmp_channel, queue, no_declare: true, passive: true)
-        tmp_queue.delete
-      ensure
-        safely_close_channel(tmp_channel)
+      def bind(exchange, options = {})
+        name = exchange.respond_to?(:name) ? exchange.name : exchange
+        scoped_name = Legion::Transport::TenantTopology.exchange_name(name, tenant_id: @tenant_id)
+        result = super(scoped_name, options)
+        declaration = channel.exchanges[scoped_name] if channel.respond_to?(:exchanges)
+        Legion::Transport::TenantMigration.register_binding(tenant_id: @tenant_id, name: @queue_name_arg,
+                                                            exchange: declaration || exchange, options: options)
+        result
+      end
+
+      def unbind(exchange, options = {})
+        name = exchange.respond_to?(:name) ? exchange.name : exchange
+        result = super(Legion::Transport::TenantTopology.exchange_name(name, tenant_id: @tenant_id), options)
+        Legion::Transport::TenantMigration.register_binding(tenant_id: @tenant_id, name: @queue_name_arg,
+                                                            exchange: exchange, options: options, remove: true)
+        result
       end
 
       def default_options
@@ -68,7 +92,8 @@ module Legion
         prefix = Legion::Identity::Process.queue_prefix
         return false if prefix.nil? || prefix.empty?
 
-        @queue_name_arg.to_s.start_with?(prefix)
+        @queue_name_arg.to_s.start_with?(prefix) ||
+          @queue_name_arg.to_s.start_with?(Legion::Transport::TenantTopology.queue_name(prefix, tenant_id: @tenant_id))
       end
 
       def queue_options
@@ -83,28 +108,29 @@ module Legion
         "#{derive_segments.join('.')}.dlx"
       end
 
-      def ensure_dlx(merged_options)
+      def ensure_dlx(merged_options:, **)
+        return if merged_options[:passive] || merged_options[:no_declare]
         return if credential_scoping_enabled? && (bootstrap_phase? || !topology_mode?)
 
-        dlx_name = merged_options.dig(:arguments, :'x-dead-letter-exchange')
+        arguments = merged_options[:arguments] || {}
+        dlx_name = arguments[:'x-dead-letter-exchange'] || arguments['x-dead-letter-exchange']
         return if dlx_name.nil? || dlx_name.empty?
 
-        session = Legion::Transport::Connection.session
-        return unless session&.open?
+        session = if @explicit_channel.respond_to?(:connection)
+                    @explicit_channel.connection
+                  else
+                    Legion::Transport::Connection.session
+                  end
+        raise IOError, "Cannot provision required DLX #{dlx_name}: transport session is not open" unless session&.open?
 
-        dlx_ch = nil
         dlx_ch = session.create_channel
         declare_dlx(dlx_name, dlx_ch)
-      rescue Legion::Transport::CONNECTOR::PreconditionFailed => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.queue.ensure_dlx', dlx: dlx_name)
-        recreate_dlx(dlx_name)
-      rescue Legion::Transport::CONNECTOR::ChannelAlreadyClosed => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.queue.ensure_dlx',
-                         dlx: dlx_name, detail: 'channel closed during DLX declaration')
       rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.queue.ensure_dlx', dlx: dlx_name)
+        handle_exception(e, level: :warn, handled: false, operation: 'transport.queue.ensure_dlx', dlx: dlx_name,
+                         detail: 'Required dead-letter topology is unavailable; source queue was not declared.')
+        raise
       ensure
-        dlx_ch&.close if dlx_ch&.open?
+        safely_close_channel(dlx_ch)
       end
 
       def declare_dlx(dlx_name, dlx_channel)
@@ -112,23 +138,6 @@ module Legion
         dlx_channel.queue_declare_without_recording_topology("#{dlx_name}.queue", durable: true, auto_delete: false,
                                                                                   arguments: { 'x-queue-type': 'classic' })
         dlx_channel.queue_bind("#{dlx_name}.queue", dlx_name, routing_key: '#')
-      end
-
-      def recreate_dlx(dlx_name)
-        log.warn "DLX #{dlx_name} exists with wrong parameters, deleting and recreating"
-        ch = Legion::Transport::Connection.session.create_channel
-        ch.exchange_delete(dlx_name)
-        ch.queue_delete("#{dlx_name}.queue")
-        ch.close
-        ch = Legion::Transport::Connection.session.create_channel
-        declare_dlx(dlx_name, ch)
-      rescue Legion::Transport::CONNECTOR::ChannelAlreadyClosed => e
-        handle_exception(e, level: :error, handled: true, operation: 'transport.queue.recreate_dlx',
-                         dlx: dlx_name, detail: 'session channel unavailable during DLX recreation')
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.queue.recreate_dlx', dlx: dlx_name)
-      ensure
-        ch&.close if ch&.open?
       end
 
       def queue_name

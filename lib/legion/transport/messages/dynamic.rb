@@ -9,7 +9,7 @@ module Legion::Transport::Messages # rubocop:disable Style/ClassAndModuleChildre
     end
 
     def message
-      { args:     @options[:args] || @options,
+      { args:     @options[:args] || @options.except(*PUBLISH_OPTION_KEYS),
         function: function.values[:name] }
     end
 
@@ -20,7 +20,11 @@ module Legion::Transport::Messages # rubocop:disable Style/ClassAndModuleChildre
     end
 
     def exchange
-      Legion::Transport::Exchange.new(function.runner.extension.values[:exchange])
+      Legion::Transport::Exchange
+    end
+
+    def publish_exchange_name
+      function.runner.extension.values[:exchange]
     end
 
     def function

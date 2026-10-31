@@ -7,7 +7,7 @@ module Legion
       # legion-data or a function_id. Used by the /api/transport/publish route.
       class Direct < Legion::Transport::Message
         def exchange
-          Legion::Transport::Exchange.new(@options[:exchange].to_s)
+          Legion::Transport::Exchange
         end
 
         def routing_key
@@ -15,7 +15,7 @@ module Legion
         end
 
         def message
-          @options.except(:exchange, :routing_key)
+          @options.except(:exchange, :routing_key, *PUBLISH_OPTION_KEYS)
         end
 
         def validate

@@ -15,6 +15,8 @@ rescue LoadError
 end
 
 require 'bundler/setup'
+require 'tmpdir'
+require 'fileutils'
 
 require 'legion/settings'
 ENV['LEGION_DNS_BOOTSTRAP'] = 'false'
@@ -22,6 +24,17 @@ Legion::Settings.load
 require 'legion/transport'
 
 RSpec.configure do |config|
+  config.before(:suite) do
+    @transport_spool_directory = Dir.mktmpdir('legion-transport-spec-spool')
+    Legion::Settings[:transport][:spool] = { directory: @transport_spool_directory }
+  end
+
+  config.after(:suite) do
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    Legion::Transport::Spool.stop_replay(deadline: deadline)
+    FileUtils.remove_entry_secure(@transport_spool_directory) if @transport_spool_directory
+  end
+
   config.example_status_persistence_file_path = '.rspec_status'
   config.disable_monkey_patching!
   config.expect_with(:rspec) { |c| c.syntax = :expect }

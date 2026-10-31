@@ -91,7 +91,7 @@ module Legion
           encrypt:    ENV['transport.messages.encrypt'] == 'true',
           ttl:        ENV.fetch('transport.messages.ttl', nil),
           priority:   ENV['transport.messages.priority'].to_i,
-          persistent: ENV['transport.messages.persistent'] == 'true'
+          persistent: ENV.fetch('transport.messages.persistent', 'true') == 'true'
         }
       end
 
@@ -121,7 +121,7 @@ module Legion
           connected:            false,
           logger_level:         resolve_log_level,
           messages:             messages,
-          prefetch:             ENV['transport.prefetch'].to_i,
+          prefetch:             ENV.fetch('transport.prefetch', '2').to_i,
           exchanges:            exchanges,
           queues:               queues,
           connection:           connection,

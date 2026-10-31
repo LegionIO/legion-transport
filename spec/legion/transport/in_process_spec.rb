@@ -1,294 +1,359 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'timeout'
+require 'weakref'
 require 'legion/transport/in_process'
 
 RSpec.describe Legion::Transport::InProcess do
-  after { Legion::Transport::Local.reset! }
+  let(:channel) { described_class::Channel.new }
+  let(:exchange) { described_class::Exchange.new(channel, 'topic', 'tasks') }
+  let(:queue) { described_class::Queue.new(channel, 'work') }
 
-  describe 'exception classes' do
-    it 'PreconditionFailed is a StandardError' do
-      expect(described_class::PreconditionFailed.ancestors).to include(StandardError)
-    end
-
-    it 'ChannelAlreadyClosed is a StandardError' do
-      expect(described_class::ChannelAlreadyClosed.ancestors).to include(StandardError)
-    end
-
-    it 'ChannelLevelException is a StandardError' do
-      expect(described_class::ChannelLevelException.ancestors).to include(StandardError)
-    end
+  before do
+    Legion::Transport::Local.reset!
+    @workers = []
+    @sessions = []
   end
 
-  describe 'DeliveryInfo' do
-    it 'is a Struct with keyword_init' do
-      di = described_class::DeliveryInfo.new(delivery_tag: 'tag1', routing_key: 'rk', exchange: 'ex')
-      expect(di.delivery_tag).to eq('tag1')
-      expect(di.routing_key).to eq('rk')
-      expect(di.exchange).to eq('ex')
+  after do
+    @workers.each do |worker|
+      worker.kill if worker.alive?
+      worker.join
     end
+    @sessions.each(&:close)
+    channel.close
+    Legion::Transport::Local.reset!
   end
 
-  describe 'MessageProperties' do
-    it 'is a Struct with keyword_init' do
-      mp = described_class::MessageProperties.new(
-        content_type:     'application/json',
-        headers:          {},
-        timestamp:        Time.now,
-        content_encoding: nil
-      )
-      expect(mp.content_type).to eq('application/json')
-      expect(mp.headers).to eq({})
-      expect(mp.content_encoding).to be_nil
-    end
+  def start_worker(&)
+    Thread.new(&).tap { |worker| @workers << worker }
   end
 
-  describe Legion::Transport::InProcess::Session do
-    subject(:session) { described_class.new }
-
-    it 'starts closed' do
-      expect(session.open?).to be false
-      expect(session.closed?).to be true
-    end
-
-    it 'opens after start' do
+  def start_session
+    described_class::Session.new.tap do |session|
+      @sessions << session
       session.start
-      expect(session.open?).to be true
-      expect(session.closed?).to be false
-    end
-
-    it 'start returns self' do
-      expect(session.start).to be(session)
-    end
-
-    it 'closes after close' do
-      session.start
-      session.close
-      expect(session.open?).to be false
-      expect(session.closed?).to be true
-    end
-
-    it 'creates a channel' do
-      channel = session.create_channel
-      expect(channel).to be_a(Legion::Transport::InProcess::Channel)
-    end
-
-    it 'create_channel accepts id and pool_size' do
-      channel = session.create_channel(1, 2)
-      expect(channel).to be_a(Legion::Transport::InProcess::Channel)
-    end
-
-    it 'on_blocked is a no-op' do
-      expect { session.on_blocked { nil } }.not_to raise_error
-    end
-
-    it 'on_unblocked is a no-op' do
-      expect { session.on_unblocked { nil } }.not_to raise_error
-    end
-
-    it 'after_recovery_completed is a no-op' do
-      expect { session.after_recovery_completed { nil } }.not_to raise_error
-    end
-
-    it 'close calls Local.reset!' do
-      session.start
-      Legion::Transport::Local.publish('ex', 'rk', 'data')
-      session.close
-      expect(Legion::Transport::Local.queue_depth('rk')).to eq(0)
     end
   end
 
-  describe Legion::Transport::InProcess::Channel do
-    subject(:channel) { described_class.new }
-
-    it 'starts open' do
-      expect(channel.open?).to be true
-    end
-
-    it 'closes after close' do
-      channel.close
-      expect(channel.open?).to be false
-    end
-
-    it 'prefetch returns count' do
-      expect(channel.prefetch(5)).to eq(5)
-    end
-
-    it 'prefetch accepts global flag' do
-      expect(channel.prefetch(3, _global: true)).to eq(3)
-    end
-
-    it 'basic_qos delegates to prefetch' do
-      expect(channel.basic_qos(10)).to eq(10)
-    end
-
-    it 'exchange_declare is a no-op' do
-      expect { channel.exchange_declare('ex', 'topic') }.not_to raise_error
-    end
-
-    it 'acknowledge is a no-op' do
-      expect { channel.acknowledge('tag') }.not_to raise_error
-    end
-
-    it 'reject is a no-op' do
-      expect { channel.reject('tag') }.not_to raise_error
-    end
-
-    it 'exchange_delete is a no-op' do
-      expect { channel.exchange_delete('ex') }.not_to raise_error
-    end
+  def subscribe_weak_callback(queue:, **)
+    receiver = Object.new
+    receiver.define_singleton_method(:call) { |_info, _properties, _payload| nil }
+    [queue.subscribe(&receiver.method(:call)), WeakRef.new(receiver)]
   end
 
-  describe Legion::Transport::InProcess::Exchange do
-    subject(:exchange) { described_class.new(channel, 'topic', 'my.exchange') }
+  it 'accepts all four Bunny channel arguments and uses the resulting channel' do
+    session = start_session
+    local_channel = session.create_channel(nil, 2, false, 10)
+    local_exchange = local_channel.exchange('contract', type: :topic)
+    local_queue = described_class::Queue.new(local_channel, 'contract.queue')
+    local_queue.bind(local_exchange, routing_key: 'work')
+    received = []
+    local_queue.subscribe { |_info, _properties, payload| received << payload }
 
-    let(:channel) { Legion::Transport::InProcess::Channel.new }
-
-    it 'stores name, type, channel' do
-      expect(exchange.name).to eq('my.exchange')
-      expect(exchange.type).to eq('topic')
-      expect(exchange.channel).to be(channel)
-    end
-
-    it 'publish delegates to Local.publish' do
-      received = nil
-      Legion::Transport::Local.subscribe('my.key') { |msg| received = msg }
-      exchange.publish('hello', routing_key: 'my.key')
-      expect(received).to eq('hello')
-    end
-
-    it 'publish uses empty routing_key by default' do
-      received = nil
-      Legion::Transport::Local.subscribe('') { |msg| received = msg }
-      exchange.publish('data')
-      expect(received).to eq('data')
-    end
-
-    it 'delete returns true' do
-      expect(exchange.delete).to be true
-    end
-
-    it 'delete accepts keyword args' do
-      expect(exchange.delete(if_unused: true)).to be true
-    end
+    expect(local_exchange.publish('accepted', routing_key: 'work')).to include(routed: true)
+    expect(received).to eq(['accepted'])
   end
 
-  describe Legion::Transport::InProcess::Queue do
-    subject(:queue) { described_class.new(channel, 'my.queue') }
+  it 'routes only through the named exchange even when routing keys are identical' do
+    other = described_class::Exchange.new(channel, 'topic', 'other')
+    queue.bind(exchange, routing_key: 'work')
+    received = []
+    queue.subscribe { |_info, _properties, payload| received << payload }
 
-    let(:channel) { Legion::Transport::InProcess::Channel.new }
+    expect(other.publish('wrong', routing_key: 'work')).to include(routed: false)
+    expect(exchange.publish('right', routing_key: 'work')).to include(routed: true)
+    expect(received).to eq(['right'])
+  end
 
-    it 'stores name and channel' do
-      expect(queue.name).to eq('my.queue')
-      expect(queue.channel).to be(channel)
-    end
+  it 'reports no route without creating a hidden backlog or reaching default-exchange Local subscribers' do
+    default_deliveries = []
+    Legion::Transport::Local.subscribe('work') { |payload| default_deliveries << payload }
+    expect(exchange.publish('unroutable', routing_key: 'work')).to include(routed: false)
+    queue.bind(exchange, routing_key: 'work')
+    received = []
+    queue.subscribe { |_info, _properties, payload| received << payload }
 
-    it 'bind stores binding and returns self' do
-      exchange = Legion::Transport::InProcess::Exchange.new(channel, 'topic', 'ex')
-      result = queue.bind(exchange, routing_key: 'some.key')
-      expect(result).to be(queue)
-    end
+    expect(received).to be_empty
+    expect(default_deliveries).to be_empty
+    expect(Legion::Transport::Local.queue_depth('work')).to eq(0)
+  end
 
-    it 'subscribe returns a Consumer' do
-      consumer = queue.subscribe { |_di, _meta, _payload| nil }
-      expect(consumer).to be_a(Legion::Transport::InProcess::Consumer)
-    end
+  it 'unbinds only the requested exchange and key using the Bunny options hash contract' do
+    other = described_class::Exchange.new(channel, 'topic', 'other')
+    queue.bind(exchange, { routing_key: 'work' })
+    queue.bind(other, routing_key: 'work')
+    queue.unbind(exchange, { routing_key: 'work' })
+    received = []
+    queue.subscribe { |_info, _properties, payload| received << payload }
 
-    it 'subscribe creates a consumer with a generated tag' do
-      consumer = queue.subscribe { |_di, _meta, _payload| nil }
-      expect(consumer.consumer_tag).not_to be_nil
-    end
+    expect(exchange.publish('wrong', routing_key: 'work')).to include(routed: false)
+    other.publish('right', routing_key: 'work')
+    expect(received).to eq(['right'])
+  end
 
-    it 'subscribe uses provided consumer_tag' do
-      consumer = queue.subscribe(consumer_tag: 'my-tag') { |_di, _meta, _payload| nil }
-      expect(consumer.consumer_tag).to eq('my-tag')
-    end
-
-    it 'subscribe with binding routing_key receives messages' do
-      exchange = Legion::Transport::InProcess::Exchange.new(channel, 'topic', 'ex')
-      queue.bind(exchange, routing_key: 'task.work')
-
+  {
+    'work.run' => { matches: ['work.run'], misses: ['work', 'work.run.extra', 'other.run'] },
+    'work.*'   => { matches: ['work.run'], misses: ['work', 'work.run.extra', 'other.run'] },
+    'work.#'   => { matches: ['work', 'work.run', 'work.run.extra'], misses: ['worker', 'other.work'] },
+    '#.done'   => { matches: ['done', 'work.done', 'work.run.done'], misses: ['work', 'done.extra'] },
+    'a.#.b'    => { matches: ['a.b', 'a.one.two.b'], misses: ['a', 'a.one.c', 'a.b.c'] },
+    '#'        => { matches: ['', 'one', 'one.two'], misses: [] },
+    '#.#'      => { matches: ['', 'one', 'one.two'], misses: [] },
+    'task.+'   => { matches: ['task.+'], misses: ['task.x', 'task.xx'] },
+    ''         => { matches: [''], misses: ['work'] }
+  }.each do |pattern, cases|
+    it "matches AMQP topic words for #{pattern.inspect}" do
+      queue.bind(exchange, routing_key: pattern)
       received = []
-      queue.subscribe do |delivery_info, metadata, payload|
-        received << { di: delivery_info, meta: metadata, payload: payload }
+      queue.subscribe { |info, _properties, payload| received << [info.routing_key, payload] }
+      cases[:matches].each do |key|
+        expect(exchange.publish(key, routing_key: key)).to include(routed: true)
+      end
+      cases[:misses].each do |key|
+        expect(exchange.publish(key, routing_key: key)).to include(routed: false)
       end
 
-      Legion::Transport::Local.publish('ex', 'task.work', 'job1')
-      expect(received.size).to eq(1)
-      expect(received.first[:payload]).to eq('job1')
-    end
-
-    it 'subscribe delivery_info has correct fields' do
-      exchange = Legion::Transport::InProcess::Exchange.new(channel, 'topic', 'my.exchange')
-      queue.bind(exchange, routing_key: 'rk.test')
-
-      delivery_infos = []
-      queue.subscribe { |di, _meta, _payload| delivery_infos << di }
-
-      Legion::Transport::Local.publish('my.exchange', 'rk.test', 'payload')
-      expect(delivery_infos.first.routing_key).to eq('rk.test')
-      expect(delivery_infos.first.exchange).to eq('my.queue')
-      expect(delivery_infos.first.delivery_tag).not_to be_nil
-    end
-
-    it 'subscribe metadata has correct fields' do
-      exchange = Legion::Transport::InProcess::Exchange.new(channel, 'topic', 'ex')
-      queue.bind(exchange, routing_key: 'meta.test')
-
-      metadatas = []
-      queue.subscribe { |_di, meta, _payload| metadatas << meta }
-
-      Legion::Transport::Local.publish('ex', 'meta.test', 'p')
-      expect(metadatas.first.content_type).to eq('application/json')
-      expect(metadatas.first.headers).to eq({})
-    end
-
-    it 'subscribe falls back to queue name when no bindings' do
-      received = []
-      queue.subscribe { |_di, _meta, payload| received << payload }
-
-      Legion::Transport::Local.publish('ex', 'my.queue', 'msg')
-      expect(received).to eq(['msg'])
-    end
-
-    it 'subscribe falls back to queue name when binding has empty routing_key' do
-      exchange = Legion::Transport::InProcess::Exchange.new(channel, 'topic', 'ex')
-      queue.bind(exchange, routing_key: '')
-
-      received = []
-      queue.subscribe { |_di, _meta, payload| received << payload }
-
-      Legion::Transport::Local.publish('ex', 'my.queue', 'fallback')
-      expect(received).to eq(['fallback'])
-    end
-
-    it 'acknowledge is a no-op' do
-      expect { queue.acknowledge('tag') }.not_to raise_error
-    end
-
-    it 'reject is a no-op' do
-      expect { queue.reject('tag') }.not_to raise_error
-    end
-
-    it 'delete returns true' do
-      expect(queue.delete).to be true
+      expect(received).to eq(cases[:matches].map { |key| [key, key] })
     end
   end
 
-  describe Legion::Transport::InProcess::Consumer do
-    subject(:consumer) { described_class.new(nil, nil, 'tag-abc') }
+  it 'does not interpret topic wildcards on a direct exchange' do
+    direct = described_class::Exchange.new(channel, 'direct', 'direct')
+    queue.bind(direct, routing_key: 'work.*')
+    received = []
+    queue.subscribe { |_info, _properties, payload| received << payload }
 
-    it 'stores consumer_tag' do
-      expect(consumer.consumer_tag).to eq('tag-abc')
-    end
+    expect(direct.publish('wrong', routing_key: 'work.run')).to include(routed: false)
+    direct.publish('literal', routing_key: 'work.*')
+    expect(received).to eq(['literal'])
+  end
 
-    it 'starts not cancelled' do
-      expect(consumer.cancelled?).to be false
-    end
+  it 'routes fanout bindings regardless of key without crossing exchange identity' do
+    fanout = described_class::Exchange.new(channel, 'fanout', 'fanout')
+    other = described_class::Exchange.new(channel, 'fanout', 'other')
+    queue.bind(fanout, routing_key: 'ignored')
+    received = []
+    queue.subscribe { |_info, _properties, payload| received << payload }
 
-    it 'cancel sets cancelled' do
+    fanout.publish('routed', routing_key: 'anything')
+    expect(other.publish('wrong', routing_key: 'anything')).to include(routed: false)
+    expect(received).to eq(['routed'])
+  end
+
+  it 'binds unbound queues only through the default exchange' do
+    received = []
+    queue.subscribe { |_info, _properties, payload| received << payload }
+
+    expect(exchange.publish('wrong', routing_key: queue.name)).to include(routed: false)
+    expect(channel.default_exchange.publish('right', routing_key: queue.name)).to include(routed: true)
+    expect(received).to eq(['right'])
+  end
+
+  it 'delivers once per queue even when several bindings match' do
+    queue.bind(exchange, routing_key: '#').bind(exchange, routing_key: 'work.*').bind(exchange, routing_key: '#')
+    received = []
+    queue.subscribe { |_info, _properties, payload| received << payload }
+    exchange.publish('once', routing_key: 'work.run')
+
+    expect(received).to eq(['once'])
+  end
+
+  it 'preserves the actual exchange, routing key, and full encrypted publication envelope' do
+    queue.bind(exchange, routing_key: 'work.#')
+    deliveries = []
+    queue.subscribe { |info, properties, payload| deliveries << [info, properties, payload] }
+    envelope = {
+      content_type: 'application/octet-stream', content_encoding: 'aes-256-gcm',
+      headers: { 'iv' => 'base64-iv', 'auth_tag' => 'base64-tag', 'tenant_id' => 'alpha' },
+      timestamp: 123, correlation_id: 'correlation', message_id: 'message', reply_to: 'reply',
+      type: 'task', priority: 7, expiration: '1000', app_id: 'spec', persistent: false,
+      delivery_mode: 1, user_id: 'worker', mandatory: true
+    }
+    exchange.publish("\x00\xFF".b, routing_key: 'work.run', **envelope)
+    info, properties, payload = deliveries.fetch(0)
+
+    expect(info.exchange).to eq('tasks')
+    expect(info.routing_key).to eq('work.run')
+    expect(properties.to_h).to include(envelope)
+    expect(properties.content_encoding).to eq('aes-256-gcm')
+    expect(properties.headers).to eq(envelope.fetch(:headers))
+    expect(payload).to eq("\x00\xFF".b)
+  end
+
+  it 'retains pre-subscription backlog, not completed history, for competing consumers' do
+    queue.bind(exchange, routing_key: 'work')
+    exchange.publish('backlog', routing_key: 'work')
+    first = []
+    second = []
+    queue.subscribe { |_info, _properties, payload| first << payload }
+    exchange.publish('live', routing_key: 'work')
+    queue.subscribe { |_info, _properties, payload| second << payload }
+    expect(second).to be_empty
+    exchange.publish('next', routing_key: 'work')
+    exchange.publish('last', routing_key: 'work')
+
+    expect(first + second).to contain_exactly('backlog', 'live', 'next', 'last')
+    expect(Legion::Transport::Local.queue_depth(queue.name)).to eq(0)
+  end
+
+  it 'cancels idempotently and leaves undelivered work for replacement consumers' do
+    queue.bind(exchange, routing_key: 'work')
+    cancelled_deliveries = []
+    5.times do
+      consumer = queue.subscribe { |_info, _properties, payload| cancelled_deliveries << payload }
+      consumer.cancel
       consumer.cancel
       expect(consumer.cancelled?).to be true
     end
+    exchange.publish('pending', routing_key: 'work')
+    replacement = []
+    queue.subscribe { |_info, _properties, payload| replacement << payload }
+
+    expect(cancelled_deliveries).to be_empty
+    expect(replacement).to eq(['pending'])
+  end
+
+  it 'releases the cancelled callback even while the consumer object remains retained' do
+    consumer, receiver = subscribe_weak_callback(queue: queue)
+    consumer.cancel
+    GC.start(full_mark: true, immediate_sweep: true)
+
+    expect(consumer.cancelled?).to be true
+    expect(receiver.weakref_alive?).to be_falsey
+  end
+
+  it 'allows a callback to cancel itself without deadlocking or receiving queued messages' do
+    queue.bind(exchange, routing_key: 'work')
+    received = []
+    consumer = queue.subscribe do |_info, _properties, payload|
+      received << payload
+      consumer.cancel
+      exchange.publish('pending', routing_key: 'work')
+    end
+    exchange.publish('first', routing_key: 'work')
+    expect(received).to eq(['first'])
+    expect(consumer.cancelled?).to be true
+    expect(Legion::Transport::Local.queue_depth(queue.name)).to eq(1)
+  end
+
+  it 'waits for an in-flight callback during cancellation without locking unrelated queues' do
+    queue.bind(exchange, routing_key: 'work')
+    entered = Thread::Queue.new
+    release = Thread::Queue.new
+    cancelled = Thread::Queue.new
+    received = []
+    consumer = queue.subscribe do |_info, _properties, payload|
+      received << payload
+      entered << :entered
+      release.pop
+    end
+    publisher = start_worker { exchange.publish('first', routing_key: 'work') }
+    expect(entered.pop(timeout: 2)).to eq(:entered)
+    cancellation = start_worker do
+      consumer.cancel
+      cancelled << :completed
+    end
+    Timeout.timeout(2) { Thread.pass until consumer.cancelled? }
+    expect(cancelled).to be_empty
+
+    independent = start_worker do
+      other_queue = described_class::Queue.new(channel, 'other')
+      other_queue.bind(exchange, routing_key: 'other')
+      other_queue.subscribe { |_info, _properties, payload| cancelled << payload }
+      exchange.publish('independent', routing_key: 'other')
+      exchange.publish('pending', routing_key: 'work')
+    end
+    expect(cancelled.pop(timeout: 2)).to eq('independent')
+    expect(independent.join(2)).to eq(independent)
+    release << :continue
+    expect(cancellation.join(2)).to eq(cancellation)
+    expect(publisher.join(2)).to eq(publisher)
+    expect(cancelled.pop(timeout: 2)).to eq(:completed)
+    exchange.publish('later', routing_key: 'work')
+    expect(received).to eq(['first'])
+    expect(Legion::Transport::Local.queue_depth(queue.name)).to eq(2)
+  end
+
+  it 'queue deletion cancels all consumers and removes bindings and pending work' do
+    queue.bind(exchange, routing_key: '#')
+    received = []
+    consumer = queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.delete
+
+    expect(consumer.cancelled?).to be true
+    expect(exchange.publish('unroutable', routing_key: 'work')).to include(routed: false)
+    expect(received).to be_empty
+    replacement = described_class::Queue.new(channel, queue.name)
+    replacement.subscribe { |_info, _properties, payload| received << payload }
+    expect(received).to be_empty
+  end
+
+  it 'exchange deletion removes its bindings without deleting the queue' do
+    queue.bind(exchange, routing_key: '#')
+    received = []
+    queue.subscribe { |_info, _properties, payload| received << payload }
+    exchange.delete
+
+    expect(exchange.publish('wrong', routing_key: 'work')).to include(routed: false)
+    channel.default_exchange.publish('right', routing_key: queue.name)
+    expect(received).to eq(['right'])
+  end
+
+  it 'channel close cancels its consumers but retains session-owned queue backlog' do
+    session = start_session
+    subscriber_channel = session.create_channel
+    subscriber_queue = described_class::Queue.new(subscriber_channel, 'owned')
+    subscriber_queue.bind('tasks', routing_key: 'work')
+    received = []
+    consumer = subscriber_queue.subscribe { |_info, _properties, payload| received << payload }
+    subscriber_channel.close
+    publisher_channel = session.create_channel
+    publisher_exchange = publisher_channel.exchange('tasks', type: :topic)
+    expect(publisher_exchange.publish('pending', routing_key: 'work')).to include(routed: true)
+    replacement = described_class::Queue.new(publisher_channel, 'owned')
+    replacement.subscribe { |_info, _properties, payload| received << payload }
+
+    expect(consumer.cancelled?).to be true
+    expect(received).to eq(['pending'])
+  end
+
+  it 'session close cleans up its queues without resetting another session' do
+    first = start_session
+    second = start_session
+    first_channel = first.create_channel
+    second_channel = second.create_channel
+    first_queue = described_class::Queue.new(first_channel, 'first')
+    second_queue = described_class::Queue.new(second_channel, 'second')
+    first_queue.bind('tasks', routing_key: 'work')
+    second_queue.bind('tasks', routing_key: 'work')
+    first_consumer = first_queue.subscribe { |_info, _properties, _payload| raise 'closed consumer called' }
+    received = []
+    second_queue.subscribe { |_info, _properties, payload| received << payload }
+    first.close
+    first.close
+    second_channel.exchange('tasks', type: :topic).publish('survives', routing_key: 'work')
+
+    expect(first_consumer.cancelled?).to be true
+    expect(first_channel.open?).to be false
+    expect(received).to eq(['survives'])
+    expect(Legion::Transport::Local.queue_depth('first')).to eq(0)
+    expect { first.create_channel }.to raise_error(IOError)
+  end
+
+  it 'keeps DLX topology declared on temporary channels until the session closes' do
+    session = start_session
+    temporary = session.create_channel
+    temporary.exchange_declare_without_recording_topology('tasks.dlx', 'fanout', durable: true)
+    temporary.queue_declare_without_recording_topology('tasks.dlx.queue', durable: true)
+    temporary.queue_bind('tasks.dlx.queue', 'tasks.dlx', routing_key: '#')
+    temporary.close
+    current = session.create_channel
+    current.exchange('tasks.dlx', type: :fanout).publish('failed', routing_key: 'any')
+    received = []
+    described_class::Queue.new(current, 'tasks.dlx.queue').subscribe { |_info, _properties, payload| received << payload }
+
+    expect(received).to eq(['failed'])
   end
 end

@@ -103,3 +103,42 @@ RSpec.describe Legion::Transport::Settings, '.connection with server overrides' 
     Legion::Settings[:transport][:connection].delete(:servers)
   end
 end
+
+RSpec.describe Legion::Transport::Settings, 'durability and backpressure defaults' do
+  around do |example|
+    keys = %w[transport.messages.persistent transport.prefetch]
+    saved = keys.to_h { |key| [key, ENV.fetch(key, nil)] }
+    begin
+      keys.each { |key| ENV.delete(key) }
+      example.run
+    ensure
+      saved.each { |key, value| ENV[key] = value }
+    end
+  end
+
+  it 'requests persistent messages and bounded prefetch when no override exists' do
+    defaults = described_class.default
+    expect(defaults[:messages][:persistent]).to be(true)
+    expect(defaults[:prefetch]).to eq(2)
+  end
+
+  it 'preserves explicit nonpersistent messages and unlimited prefetch' do
+    ENV['transport.messages.persistent'] = 'false'
+    ENV['transport.prefetch'] = '0'
+    defaults = described_class.default
+    expect(defaults[:messages][:persistent]).to be(false)
+    expect(defaults[:prefetch]).to eq(0)
+  end
+
+  it 'does not replace explicit user settings when merging transport defaults' do
+    original = Legion::Settings[:transport]
+    Legion::Settings.loader.settings[:transport] = original.merge(
+      messages: original.fetch(:messages).merge(persistent: false), prefetch: 0
+    )
+    Legion::Settings.merge_settings('transport', described_class.default)
+    expect(Legion::Settings[:transport][:messages][:persistent]).to be(false)
+    expect(Legion::Settings[:transport][:prefetch]).to eq(0)
+  ensure
+    Legion::Settings.loader.settings[:transport] = original
+  end
+end

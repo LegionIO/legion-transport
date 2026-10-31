@@ -22,35 +22,11 @@ RSpec.describe 'Channel leak prevention', :rabbitmq do
 
   describe 'Connection.setup' do
     it 'closes the QoS channel after applying basic_qos' do
-      # Shut down so we can observe a fresh Connection.setup cycle through
-      # the session-creation branch (not the session.open? fast path).
-      Legion::Transport::Connection.shutdown
-
-      # Intercept create_session_with_failover so we control the session object
-      # and can count channels after setup runs.
-      raw_session = Legion::Transport::Connection.send(:create_session_with_failover, connection_name: 'test-qos')
-      raw_session.start
-
-      allow(Legion::Transport::Connection).to receive(:create_session_with_failover)
-        .and_return(raw_session)
-
-      # Ensure @session is nil so setup takes the creation branch (creates QoS channel)
-      Legion::Transport::Connection.instance_variable_set(:@session, nil)
-      Legion::Transport::Connection.instance_variable_set(
-        :@channel_thread, Concurrent::ThreadLocalVar.new(nil)
-      )
-
-      # setup will create_session_with_failover → start → create QoS channel → apply_qos_and_close
-      # After that only the log_channel should remain open.
-      Legion::Transport::Connection.setup
-
-      open_after = raw_session.instance_variable_get(:@channels)&.count { |_k, v| v&.open? } || 0
-      # Only 1 open channel (log_channel) — QoS channel must have been closed.
-      expect(open_after).to eq(1)
-
-      # Restore a clean connection for subsequent tests
       Legion::Transport::Connection.shutdown
       Legion::Transport::Connection.setup
+
+      active_channels = Legion::Transport::Connection.session.instance_variable_get(:@channels).values.select(&:open?)
+      expect(active_channels.size).to eq(1) # Only the log channel remains after initial QoS.
     end
 
     it 'closes old @log_channel before creating a new one' do
@@ -128,58 +104,6 @@ RSpec.describe 'Channel leak prevention', :rabbitmq do
       old_channel&.close rescue nil # rubocop:disable Style/RescueModifier
       bad_channel&.close rescue nil # rubocop:disable Style/RescueModifier
       good_channel&.close rescue nil # rubocop:disable Style/RescueModifier
-    end
-  end
-
-  describe 'Exchange delete_exchange replaces channel' do
-    it 'gets a fresh channel via delete_exchange' do
-      exchange = Legion::Transport::Exchange.new('test_delete_exchange_leak')
-      old_channel = exchange.instance_variable_get(:@channel)
-      expect(old_channel).to be_open
-
-      exchange.delete_exchange('test_delete_exchange_leak')
-      new_channel = exchange.instance_variable_get(:@channel)
-      expect(new_channel).to be_a(Bunny::Channel)
-      expect(new_channel).to be_open
-    ensure
-      old_channel&.close rescue nil # rubocop:disable Style/RescueModifier
-      exchange.instance_variable_get(:@channel)&.close rescue nil # rubocop:disable Style/RescueModifier
-    end
-  end
-
-  describe 'Queue retry path' do
-    it 'closes old channel when PreconditionFailed triggers retry' do
-      # We stub Bunny::Queue#initialize to raise PreconditionFailed on the first call
-      # so that we exercise the rescue/retry path without needing a real parameter mismatch.
-      original_ch = nil
-      retry_ch    = nil
-      call_count  = 0
-
-      allow_any_instance_of(Bunny::Queue).to receive(:initialize).and_wrap_original do |m, *args, **kwargs, &blk|
-        call_count += 1
-        if call_count == 1
-          # Capture the channel that was assigned before the raise
-          original_ch = args[0]
-          raise Bunny::PreconditionFailed.new('test mismatch', original_ch, 406)
-        end
-
-        retry_ch = args[0]
-        m.call(*args, **kwargs, &blk)
-      end
-
-      q = nil
-      begin
-        q = Legion::Transport::Queue.new('test_queue_precond_leak')
-      rescue StandardError
-        nil # may raise if retry also fails; we only care about channel state
-      end
-
-      # The rescue should have closed original_ch before getting a new channel
-      expect(original_ch).not_to be_nil
-      expect(original_ch).not_to be_open
-    ensure
-      q&.delete rescue nil # rubocop:disable Style/RescueModifier
-      retry_ch&.close rescue nil # rubocop:disable Style/RescueModifier
     end
   end
 end

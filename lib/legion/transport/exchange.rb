@@ -1,12 +1,14 @@
 # frozen_string_literal: true
 
+require_relative 'tenant_topology'
+require_relative 'publisher'
+
 module Legion
   module Transport
     class Exchange < Legion::Transport::CONNECTOR::Exchange
       include Legion::Transport::Common
 
-      # Thread-local cache of declared exchange instances keyed by class name.
-      # Avoids redundant exchange_declare calls on every publish.
+      # Cache only exchanges declared for the same tenant, options and channel context.
       @instance_cache = Concurrent::ThreadLocalVar.new { {} }
 
       class << self
@@ -14,17 +16,22 @@ module Legion
           Legion::Transport::Exchange.instance_variable_get(:@instance_cache)
         end
 
-        def cached_instance
-          cache = instance_cache.value
-          inst = cache[name]
-          return inst if inst&.channel&.open?
-
-          cache.delete(name)
-          nil
+        def declaration(name: nil, options: {}, tenant_id: nil, **)
+          instance = allocate
+          instance.send(:prepare_declaration, name: name, options: options, tenant_id: tenant_id)
+          { name: instance.instance_variable_get(:@declaration_name), type: instance.instance_variable_get(:@type) }
         end
 
-        def cache_instance(inst)
-          instance_cache.value[name] = inst
+        def cached_instance(name: nil, options: {}, tenant_id: nil, **)
+          instance = allocate
+          instance.send(:prepare_declaration, name: name, options: options, tenant_id: tenant_id)
+          key = instance.instance_variable_get(:@cache_key)
+          cache = instance_cache.value
+          cached = cache[key]
+          return cached if cached && Legion::Transport::Publisher.channel_usable?(channel: cached.channel)
+
+          cache.delete(key)
+          nil
         end
 
         def clear_cache
@@ -32,28 +39,29 @@ module Legion
         end
       end
 
-      def initialize(exchange = exchange_name, options = {})
-        @options = options
-        @explicit_channel = @options.delete(:channel)
-        @type = options[:type] || default_type
-        super(channel, @type, exchange, options_builder(default_options, exchange_options, @options))
-        self.class.cache_instance(self) if self.class.respond_to?(:cache_instance)
-      rescue Legion::Transport::CONNECTOR::PreconditionFailed, Legion::Transport::CONNECTOR::ChannelAlreadyClosed => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.exchange.initialize', exchange: exchange)
-        raise unless @retries.nil?
-        raise if credential_scoping_enabled? && (bootstrap_phase? || (!topology_mode? && Legion::Identity::Process.resolved?))
+      attr_reader :tenant_id
 
-        @retries = 1
-        # Only close the channel if it was not explicitly provided by the caller.
-        safely_close_channel(@channel) if @explicit_channel.nil? || @channel != @explicit_channel
-        delete_exchange(exchange)
-        retry
+      def initialize(exchange = nil, options = {}, **kwargs)
+        options = options.merge(kwargs) unless kwargs.empty?
+        prepare_declaration(name: exchange, options: options, tenant_id: options[:tenant_id])
+        super(channel, @type, @declaration_name, @declaration_options)
+        self.class.instance_cache.value[@cache_key] = self
+      rescue Legion::Transport::CONNECTOR::PreconditionFailed, Legion::Transport::CONNECTOR::ChannelAlreadyClosed => e
+        handle_exception(e, level: :warn, handled: false, operation: 'transport.exchange.initialize',
+                         exchange: @declaration_name,
+                         detail: 'Declaration failed; existing exchange and bindings were preserved. Reconcile broker options explicitly.')
+        safely_close_channel(@channel) unless @explicit_channel
+        raise
       end
 
-      def delete_exchange(exchange)
-        log.warn "Exchange:#{exchange} exists with wrong parameters, deleting and creating"
-        @channel = Legion::Transport::Connection.channel
-        @channel.exchange_delete(exchange)
+      def bind(source, options = {})
+        name = source.respond_to?(:name) ? source.name : source
+        super(Legion::Transport::TenantTopology.exchange_name(name, tenant_id: @tenant_id), options)
+      end
+
+      def unbind(source, options = {})
+        name = source.respond_to?(:name) ? source.name : source
+        super(Legion::Transport::TenantTopology.exchange_name(name, tenant_id: @tenant_id), options)
       end
 
       def default_options
@@ -109,6 +117,31 @@ module Legion
       end
 
       private
+
+      def prepare_declaration(name:, options:, tenant_id:, **)
+        @options = options.dup
+        @explicit_channel = @options.delete(:channel)
+        @options.delete(:tenant_id)
+        @tenant_id = Legion::Transport::TenantTopology.resolve_tenant_id(tenant_id: tenant_id || options[:tenant_id])
+        @declaration_name = Legion::Transport::TenantTopology.exchange_name(name || exchange_name, tenant_id: @tenant_id)
+        @declaration_options = options_builder(default_options, exchange_options, @options)
+        @type = @declaration_options[:type] || default_type
+        @cache_key = [self.class, @tenant_id, @declaration_name, @type,
+                      declaration_snapshot(value: @declaration_options), @explicit_channel].freeze
+      end
+
+      def declaration_snapshot(value:, **)
+        case value
+        when Hash
+          value.to_h { |key, item| [key, declaration_snapshot(value: item)] }.freeze
+        when Array
+          value.map { |item| declaration_snapshot(value: item) }.freeze
+        when String
+          value.dup.freeze
+        else
+          value
+        end
+      end
 
       def credential_scoping_enabled?
         return false unless defined?(Legion::Settings)

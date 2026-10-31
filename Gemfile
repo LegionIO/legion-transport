@@ -10,4 +10,5 @@ group :test do
   gem 'rubocop'
   gem 'rubocop-legion'
   gem 'simplecov'
+  gem 'sinatra', '>= 4.0'
 end
