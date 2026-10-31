@@ -14,19 +14,21 @@ RSpec.describe 'Strict task publication' do
     original_loader = Legion::Settings.loader
     original = original_loader.settings[:task_execution]
     original_transport = Legion::Settings[:transport]
-    original_loader.settings[:transport] = original_transport.merge(task_publication: original_transport.fetch(:task_publication).dup)
-    original_loader.settings[:task_execution] = {
-      routes: { check_subtask: 'custom.continuation', transform: 'custom.transform', conditioner: 'custom.conditioner', task_update: 'custom.update' },
-      statuses: { completed: 'custom.completed' }, terminal_statuses: [], legacy_terminal_statuses: [],
-      message_types: { task: 'custom.task' }, protocol: { version: 99, metadata_fields: [] },
-      publication: { mandatory: false, publisher_confirm: false, spool: true }
-    }
-    example.run
-  ensure
-    Legion::Settings.loader = original_loader
-    original_loader.settings[:task_execution] = original
-    original_loader.settings.delete(:task_execution) if original.nil?
-    original_loader.settings[:transport] = original_transport
+    begin
+      original_loader.settings[:transport] = original_transport.merge(task_publication: original_transport.fetch(:task_publication).dup)
+      original_loader.settings[:task_execution] = {
+        routes: { check_subtask: 'custom.continuation', transform: 'custom.transform', conditioner: 'custom.conditioner', task_update: 'custom.update' },
+        statuses: { completed: 'custom.completed' }, terminal_statuses: [], legacy_terminal_statuses: [],
+        message_types: { task: 'custom.task' }, protocol: { version: 99, metadata_fields: [] },
+        publication: { mandatory: false, publisher_confirm: false, spool: true }
+      }
+      example.run
+    ensure
+      Legion::Settings.loader = original_loader
+      original_loader.settings[:task_execution] = original
+      original_loader.settings.delete(:task_execution) if original.nil?
+      original_loader.settings[:transport] = original_transport
+    end
   end
 
   before do
