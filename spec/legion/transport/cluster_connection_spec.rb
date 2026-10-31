@@ -27,7 +27,7 @@ RSpec.describe Legion::Transport::Connection, 'cluster node rotation', :rabbitmq
     end
 
     it 'deduplicates hosts from both sources' do
-      Legion::Settings[:transport][:cluster_nodes] = ['127.0.0.1:5672']
+      Legion::Settings[:transport][:cluster_nodes] = Legion::Settings[:transport][:connection][:resolved_hosts].dup
       opts = described_class.send(:build_bunny_opts, connection_name: 'test')
       expect(opts[:host]).to eq('127.0.0.1')
       expect(opts[:hosts]).to be_nil
@@ -56,8 +56,8 @@ RSpec.describe Legion::Transport::Connection, 'failover' do
   let(:available) { instance_double(Bunny::Session, start: nil) }
 
   before do
+    stub_const('Legion::Transport::CONNECTOR', Bunny)
     allow(connection).to receive(:build_bunny_opts).and_return(hosts: hosts)
-    allow(connection).to receive(:handle_exception)
   end
 
   it 'starts the next host when the first session fails during its handshake' do

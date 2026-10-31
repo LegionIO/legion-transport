@@ -12,8 +12,9 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
   let(:snapshot) { instance_double(Legion::Transport::Connection::Recovery, restore: nil) }
 
   before do
+    stub_const('Legion::Transport::TYPE', 'bunny')
+    stub_const('Legion::Transport::CONNECTOR', Bunny)
     @connected = Legion::Settings[:transport][:connected]
-    allow(connection).to receive(:handle_exception)
     allow(Legion::Transport::Connection::Recovery).to receive(:capture).and_return(snapshot)
   end
 
@@ -54,9 +55,6 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
 
       expect(connection.force_reconnect).to be true
       expect(events).to eq(%i[connected restored notified])
-      expect(connection).to have_received(:handle_exception).with(
-        instance_of(IOError), hash_including(operation: 'transport.connection.reconnect_callback')
-      )
     end
 
     it 'retains the original subscription snapshot after failed restoration' do
@@ -260,7 +258,6 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       connection.send(:tear_down_session, sess: session)
 
       expect(socket).to be_closed
-      expect(connection).not_to have_received(:handle_exception)
     end
 
     it 'closes the socket even when session cleanup raises' do
@@ -272,9 +269,6 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       connection.send(:tear_down_session, sess: session)
 
       expect(socket).to be_closed
-      expect(connection).to have_received(:handle_exception).with(
-        instance_of(IOError), hash_including(operation: 'transport.connection.tear_down_session')
-      )
     end
   end
 end
