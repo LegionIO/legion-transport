@@ -19,7 +19,7 @@ module Legion
           return {} unless Legion::Crypt::Mtls.enabled?
 
           created_files = []
-          node_name = pki_node_name
+          node_name = Legion::Settings[:client][:name]
           cert_data = Legion::Crypt::Mtls.issue_cert(common_name: node_name)
           Legion::Transport.logger.info(
             "[mTLS] Issued PKI cert for #{node_name}: serial=#{cert_data[:serial]} expiry=#{cert_data[:expiry]}"
@@ -35,10 +35,10 @@ module Legion
         end
 
         def vault_pki_enabled?
-          tls = transport_tls_settings
+          tls = Legion::Settings[:transport][:tls]
           return false unless tls.is_a?(Hash)
 
-          tls[:vault_pki] || tls['vault_pki'] || false
+          tls[:vault_pki] == true
         rescue StandardError => e
           handle_exception(e, level: :warn, handled: true, operation: 'transport.connection.vault_pki_enabled')
           false
@@ -77,26 +77,6 @@ module Legion
             handle_exception(e, level: :warn, handled: true, operation: 'transport.connection.cleanup_pki_tempfiles')
           end
           tempfiles&.clear
-        end
-
-        def pki_node_name
-          return 'legion.internal' unless defined?(Legion::Settings)
-
-          name = Legion::Settings[:client]&.dig(:name) || Legion::Settings[:client]&.dig('name')
-          name || 'legion.internal'
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'transport.connection.pki_node_name')
-          'legion.internal'
-        end
-
-        def transport_tls_settings
-          return {} unless defined?(Legion::Settings)
-
-          tls = Legion::Settings[:transport][:tls]
-          tls.is_a?(Hash) ? tls : {}
-        rescue StandardError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'transport.connection.transport_tls_settings')
-          {}
         end
       end
     end

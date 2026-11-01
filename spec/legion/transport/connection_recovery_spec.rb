@@ -15,11 +15,13 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
     stub_const('Legion::Transport::TYPE', 'bunny')
     stub_const('Legion::Transport::CONNECTOR', Bunny)
     @connected = Legion::Settings[:transport][:connected]
+    @pool_size = Legion::Settings[:transport][:connection_pool_size]
     allow(Legion::Transport::Connection::Recovery).to receive(:capture).and_return(snapshot)
   end
 
   after do
     Legion::Settings[:transport][:connected] = @connected
+    Legion::Settings[:transport][:connection_pool_size] = @pool_size
   end
 
   describe '.force_reconnect' do
@@ -74,7 +76,7 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
 
     it 'recovers closed consumer channels and survives repeated pooled reconnects', :rabbitmq do
       allow(Legion::Transport::Connection::Recovery).to receive(:capture).and_call_original
-      allow(connection).to receive(:settings).and_return(Legion::Settings[:transport].merge(connection_pool_size: 3))
+      Legion::Settings[:transport][:connection_pool_size] = 3
       connection.setup
       publisher = connection.channel
       queue = publisher.queue('', exclusive: true)

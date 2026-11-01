@@ -183,10 +183,11 @@ RSpec.describe 'Strict task publication' do
     end.to raise_error(Legion::Transport::PublishRejected)
   end
 
-  it 'recovers owned defaults after loader replacement while preserving local policy and live connection state' do
+  it 'honors local policy and live connection state after explicit library bootstrap on a replacement loader' do
     replacement = Legion::Settings::Loader.new
     replacement.settings[:transport] = { task_publication: { mandatory: false }, connected: true }
     Legion::Settings.loader = replacement
+    Legion::Settings.register_library(:transport, Legion::Transport::Settings.default)
 
     expect(message.publish!).to include(accepted: true)
     expect(Legion::Settings[:transport][:connected]).to be(true)

@@ -13,9 +13,11 @@
 - Preserve fixed task stage routes and canonical statuses despite local configuration drift, reject missing task routes, and route meaningful short templates/structured conditions without string-length bypasses.
 - Implement lite manual acknowledgement, rejection/requeue, redelivery metadata and ownership-safe cancellation/channel recovery. Preserve callback failures as recoverable pending work without claiming delivery or looping synchronously on rejects.
 - Declare Base64 as a direct runtime dependency so standalone consumers can load spool support on Ruby 3.4 and newer without incidental dependencies.
+- Read message limits and metadata, connection/TLS policy, Vault configuration and routing directly from live `Legion::Settings[:transport]`; remove cached or forwarding-only settings accessors and optional-dependency fallbacks.
+- Reject missing or invalid payload safety limits with a configuration error before broker publication.
 
 ### Changed
-- Require generic `legion-settings >= 1.4.3`; register Transport defaults against the active loader without resetting live policy, and document local publication policy versus stable wire identities and lite-mode durability limits.
+- Require generic `legion-settings >= 1.4.5`; register Transport defaults at startup, never during policy reads, and document local publication policy versus stable wire identities and lite-mode durability limits.
 
 ## [1.4.31] - 2026-10-29
 

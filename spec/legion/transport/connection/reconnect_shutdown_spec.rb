@@ -20,10 +20,11 @@ RSpec.describe Legion::Transport::Connection, 'reconnect cancellation', :rabbitm
 
   before do
     @connected = Legion::Settings[:transport][:connected]
+    @pool_size = Legion::Settings[:transport][:connection_pool_size]
+    Legion::Settings[:transport][:connection_pool_size] = 1
     @threads = []
     @releases = []
     allow(connection).to receive(:handle_exception)
-    allow(connection).to receive(:settings).and_return(Legion::Settings[:transport].merge(connection_pool_size: 1))
     connection.setup
   end
 
@@ -33,6 +34,7 @@ RSpec.describe Legion::Transport::Connection, 'reconnect cancellation', :rabbitm
     connection.shutdown
   ensure
     Legion::Settings[:transport][:connected] = @connected
+    Legion::Settings[:transport][:connection_pool_size] = @pool_size
   end
 
   def start_reconnect

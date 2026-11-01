@@ -13,7 +13,6 @@ module Legion
 
       module Helper
         def transport_task_publication_settings
-          Legion::Settings.register_library(:transport, Legion::Transport::Settings.default) unless Legion::Settings.loader&.merged_modules&.key?(:transport)
           policy = Legion::Settings[:transport][:task_publication]
           raise ConfigurationError, 'transport.task_publication must be a Hash' unless policy.is_a?(Hash)
 

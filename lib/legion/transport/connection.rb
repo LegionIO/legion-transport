@@ -25,10 +25,6 @@ module Legion
           Legion::Transport::TYPE == 'local'
         end
 
-        def settings
-          Legion::Settings[:transport]
-        end
-
         def new
           clone
         end
@@ -55,7 +51,7 @@ module Legion
           log.info("Using transport connector: #{Legion::Transport::CONNECTOR}")
           return setup_lite(generation: generation) if lite_mode?
 
-          pool_size = settings[:connection_pool_size].to_i
+          pool_size = Legion::Settings[:transport][:connection_pool_size].to_i
           if pool_size > 1
             setup_pool(pool_size: pool_size, connection_name: connection_name, generation: generation)
           elsif session.respond_to?(:open?) && session.open?
@@ -85,8 +81,8 @@ module Legion
           end
           raise IOError, 'transport session unavailable (recovery in progress)' unless current_session&.open?
 
-          ch = current_session.create_channel(nil, settings[:channel][:default_worker_pool_size], false, 10)
-          ch.prefetch(settings[:prefetch])
+          ch = current_session.create_channel(nil, Legion::Settings[:transport][:channel][:default_worker_pool_size], false, 10)
+          ch.prefetch(Legion::Settings[:transport][:prefetch])
           reconnect_mutex.synchronize do
             check_generation!(generation: generation)
             channel_thread.value = ch
@@ -233,8 +229,8 @@ module Legion
           cached_channel = channel_thread.value
           return cached_channel if Legion::Transport::Publisher.channel_usable?(channel: cached_channel)
 
-          ch = build_session.create_channel(nil, settings[:channel][:default_worker_pool_size], false, 10)
-          ch.prefetch(settings[:prefetch])
+          ch = build_session.create_channel(nil, Legion::Settings[:transport][:channel][:default_worker_pool_size], false, 10)
+          ch.prefetch(Legion::Settings[:transport][:prefetch])
           reconnect_mutex.synchronize do
             check_generation!(generation: generation)
             raise IOError, 'build session closed during channel creation' unless @build_session&.value.equal?(build_session)
@@ -394,7 +390,7 @@ module Legion
         end
 
         def apply_qos_and_close(qos_channel:, **)
-          qos_channel.basic_qos(settings[:prefetch], true)
+          qos_channel.basic_qos(Legion::Settings[:transport][:prefetch], true)
         ensure
           safe_close_channel(chan: qos_channel)
         end
@@ -433,7 +429,7 @@ module Legion
             create_session_with_failover(connection_name: connection_name)
           end
           primary = pool.checkout
-          qos_channel = primary.create_channel(nil, settings[:channel][:session_worker_pool_size])
+          qos_channel = primary.create_channel(nil, Legion::Settings[:transport][:channel][:session_worker_pool_size])
           apply_qos_and_close(qos_channel: qos_channel)
           reconnect_mutex.synchronize do
             check_generation!(generation: generation)
@@ -653,7 +649,7 @@ module Legion
           @log_channel = nil
           tear_down_session(sess: session) if session
           current_session = create_session_with_failover(connection_name: connection_name)
-          qos_channel = current_session.create_channel(nil, settings[:channel][:session_worker_pool_size])
+          qos_channel = current_session.create_channel(nil, Legion::Settings[:transport][:channel][:session_worker_pool_size])
           apply_qos_and_close(qos_channel: qos_channel)
           reconnect_mutex.synchronize do
             check_generation!(generation: generation)

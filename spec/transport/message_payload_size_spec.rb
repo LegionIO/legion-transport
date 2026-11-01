@@ -32,7 +32,7 @@ RSpec.describe Legion::Transport::Message, 'payload size enforcement' do
   it 'fails clearly if the configured safety limit is missing instead of silently allowing a larger payload' do
     Legion::Settings[:transport].delete(:max_payload_bytes)
     message = described_class.new(data: 'payload', encrypt: false)
-    expect { message.publish! }.to raise_error(KeyError)
+    expect { message.publish! }.to raise_error(Legion::Transport::Settings::ConfigurationError)
   end
 
   context 'when the payload is within the limit' do
