@@ -35,7 +35,7 @@ module Legion
 
         def source_region
           @options[:source_region] ||
-            (defined?(Legion::Settings) && Legion::Settings.dig(:region, :current)) ||
+            Legion::Settings[:region][:current] ||
             'unknown'
         end
       end

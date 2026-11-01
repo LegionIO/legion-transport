@@ -29,11 +29,6 @@ RSpec.describe 'Exchange passive declares (credential scoping)' do
   end
 
   describe '#credential_scoping_enabled?' do
-    it 'returns false when Legion::Settings is not defined' do
-      hide_const('Legion::Settings')
-      expect(instance.send(:credential_scoping_enabled?)).to be false
-    end
-
     it 'returns false when dynamic_rmq_creds is false' do
       stub_settings(false)
       expect(instance.send(:credential_scoping_enabled?)).to be false

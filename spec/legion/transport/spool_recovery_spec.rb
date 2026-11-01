@@ -109,6 +109,25 @@ RSpec.describe Legion::Transport::Spool, 'recoverable invalid records' do
     expect(properties.content_encoding).to eq('encrypted/cs')
   end
 
+  it 'quarantines an invalid timestamp while replaying a numeric-string timestamp behind it' do
+    described_class.write(exchange: 'recovered.task', routing_key: 'run', payload: 'retained-ciphertext',
+                          timestamp: 'not-a-timestamp', content_encoding: 'encrypted/cs', headers: { iv: 'retained-iv' })
+    described_class.write(exchange: 'recovered.task', routing_key: 'run', payload: 'healthy tail', timestamp: '0')
+
+    described_class.replay_async
+    finish_replay
+
+    payload, properties = deliveries.pop(timeout: 2)
+    expect(payload).to eq('healthy tail')
+    expect(properties.timestamp).to eq(0)
+    expect(deliveries).to be_empty
+    expect(described_class.status).to include(pending: 0, quarantined: 1)
+    entry = described_class.recovery_entries.fetch(0)
+    retained = described_class.recovery_record(id: entry[:id]).fetch(:record)
+    expect(retained[:envelope]).to include(timestamp: 'not-a-timestamp', headers: { iv: 'retained-iv' })
+    expect(Base64.strict_decode64(retained[:payload])).to eq('retained-ciphertext')
+  end
+
   it 'does not let a key-dependent record block plaintext work and retries readiness automatically' do
     crypt = Module.new
     stub_const('Legion::Crypt', crypt)

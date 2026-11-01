@@ -4,6 +4,14 @@ require 'spec_helper'
 require 'legion/transport/queues/region_outbound'
 
 RSpec.describe Legion::Transport::Queues::RegionOutbound do
+  around do |example|
+    original = Legion::Settings[:region]
+    Legion::Settings.loader.settings[:region] = original.dup
+    example.run
+  ensure
+    Legion::Settings.loader.settings[:region] = original
+  end
+
   it 'is a module' do
     expect(described_class).to be_a Module
   end
@@ -27,23 +35,16 @@ RSpec.describe Legion::Transport::Queues::RegionOutbound do
   end
 
   describe '.declare_all' do
-    context 'when Legion::Settings is not defined' do
-      it 'returns an empty array' do
-        hide_const('Legion::Settings')
-        expect(described_class.declare_all).to eq []
-      end
-    end
-
     context 'when peers is nil' do
       it 'returns an empty array' do
-        allow(Legion::Settings).to receive(:dig).with(:region, :peers).and_return(nil)
+        Legion::Settings[:region][:peers] = nil
         expect(described_class.declare_all).to eq []
       end
     end
 
     context 'when peers is an empty array' do
       it 'returns an empty array' do
-        allow(Legion::Settings).to receive(:dig).with(:region, :peers).and_return([])
+        Legion::Settings[:region][:peers] = []
         expect(described_class.declare_all).to eq []
       end
     end
@@ -53,7 +54,7 @@ RSpec.describe Legion::Transport::Queues::RegionOutbound do
       let(:mock_queue)   { instance_double('Bunny::Queue') }
 
       before do
-        allow(Legion::Settings).to receive(:dig).with(:region, :peers).and_return(%w[us-east-1 eu-west-2])
+        Legion::Settings[:region][:peers] = %w[us-east-1 eu-west-2]
         allow(Legion::Transport::Connection).to receive(:channel).and_return(mock_channel)
         allow(mock_channel).to receive(:queue).and_return(mock_queue)
       end
@@ -83,7 +84,7 @@ RSpec.describe Legion::Transport::Queues::RegionOutbound do
       let(:mock_queue)   { instance_double('Bunny::Queue') }
 
       before do
-        allow(Legion::Settings).to receive(:dig).with(:region, :peers).and_return(%w[us-east-1 eu-west-2])
+        Legion::Settings[:region][:peers] = %w[us-east-1 eu-west-2]
         allow(Legion::Transport::Connection).to receive(:channel).and_return(mock_channel)
         allow(mock_channel).to receive(:queue).and_return(mock_queue)
         stub_const('Legion::Region', Module.new)

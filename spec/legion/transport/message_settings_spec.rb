@@ -3,16 +3,6 @@
 require 'spec_helper'
 
 RSpec.describe 'Message settings and publish contract (#20)' do
-  describe 'Legion::Transport.settings' do
-    it 'returns live runtime settings when Legion::Settings is defined' do
-      expect(Legion::Transport.settings).to eq(Legion::Settings[:transport])
-    end
-
-    it 'returns a hash containing messages key' do
-      expect(Legion::Transport.settings).to have_key(:messages)
-    end
-  end
-
   describe 'Message#expiration TTL fallback' do
     it 'reads :ttl from transport message settings when :expiration is not set' do
       Legion::Settings[:transport][:messages][:ttl] = '5000'
@@ -33,10 +23,9 @@ RSpec.describe 'Message settings and publish contract (#20)' do
 
   describe 'Message#persistent override' do
     it 'retains explicit false when persistence is enabled in settings' do
-      settings = Legion::Transport.settings
-      allow(Legion::Transport).to receive(:settings).and_return(settings.merge(messages: settings[:messages].merge(persistent: true)))
-
-      expect(Legion::Transport::Message.new(persistent: false).persistent).to be false
+      Legion::Settings.with_overlay(transport: { messages: { persistent: true } }) do
+        expect(Legion::Transport::Message.new(persistent: false).persistent).to be false
+      end
     end
   end
 

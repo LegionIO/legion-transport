@@ -2,15 +2,17 @@
 
 module Legion::Transport::Messages # rubocop:disable Style/ClassAndModuleChildren
   class Dynamic < Legion::Transport::Message
+    include Legion::Transport::TaskEnvelope
+
     attr_accessor :options
 
     def type
-      'task'
+      Legion::Transport::TaskProtocol::MESSAGE_TYPES.fetch(:task)
     end
 
     def message
-      { args:     @options[:args] || @options.except(*PUBLISH_OPTION_KEYS),
-        function: function.values[:name] }
+      args = @options.key?(:args) ? @options[:args] : @options.except(*ENVELOPE_KEYS, *Legion::Transport::TaskProtocol::METADATA_FIELDS)
+      super.merge(args: args, function: function.values[:name])
     end
 
     def routing_key

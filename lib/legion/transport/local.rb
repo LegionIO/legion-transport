@@ -5,13 +5,14 @@ require 'legion/logging/helper'
 module Legion
   module Transport
     module Local
-      PendingMessage = Struct.new(:exchange, :routing_key, :payload, :properties, keyword_init: true)
-      QueueState = Struct.new(:name, :key, :pending, :subscribers, :owners, :bindings, :draining, :implicit, :exchange_name,
+      PendingMessage = Struct.new(:exchange, :routing_key, :payload, :properties, :delivery_tag, :redelivered, :requeued, keyword_init: true)
+      QueueState = Struct.new(:name, :key, :pending, :unacked, :subscribers, :owners, :bindings, :draining, :implicit, :exchange_name,
                               keyword_init: true)
-      Subscription = Struct.new(:queue, :owner, :callback, :running_thread, :completed, keyword_init: true)
+      Subscription = Struct.new(:queue, :owner, :callback, :manual_ack, :running_thread, :completed, keyword_init: true)
 
       @queues = {}
       @mutex = Mutex.new
+      @next_delivery_tag = 0
 
       class << self
         include Legion::Logging::Helper
@@ -74,14 +75,15 @@ module Legion
           end
         end
 
-        def add_subscription(queue:, owner: nil, **, &callback)
+        def add_subscription(queue:, owner: nil, manual_ack: false, **, &callback)
           raise ArgumentError, 'subscriber callback required' unless callback
 
           @mutex.synchronize do
             ensure_queue!(queue: queue)
             raise IOError, 'local consumer channel is closed' if owner && !owner.open?
 
-            subscription = Subscription.new(queue: queue, owner: owner, callback: callback, completed: ConditionVariable.new)
+            subscription = Subscription.new(queue: queue, owner: owner, callback: callback, manual_ack: manual_ack,
+                                            completed: ConditionVariable.new)
             queue.subscribers << subscription
             subscription
           end
@@ -91,6 +93,7 @@ module Legion
           @mutex.synchronize do
             unregister(subscription: subscription)
             await_completion(subscription: subscription)
+            requeue_unacked(subscription: subscription)
           end
           true
         end
@@ -136,6 +139,26 @@ module Legion
           @mutex.synchronize { @queues.values.sum { |queue| queue.name == queue_name ? queue.pending.size : 0 } }
         end
 
+        def settle(owner:, delivery_tag:, multiple: false, requeue: false, **)
+          queues = @mutex.synchronize do
+            matched = @queues.values.reject do |queue|
+              entries = queue.unacked.select do |tag, (subscription, _message)|
+                subscription.owner.equal?(owner) && (tag == delivery_tag || (multiple && (delivery_tag.zero? || tag <= delivery_tag)))
+              end
+              entries.each do |tag, (_subscription, message)|
+                queue.unacked.delete(tag)
+                requeue_message(queue: queue, message: message) if requeue
+              end
+              entries.empty?
+            end
+            raise ArgumentError, "Unknown local delivery tag #{delivery_tag}" if matched.empty?
+
+            matched
+          end
+          queues.each { |queue| deliver_pending(queue: queue) } if requeue
+          true
+        end
+
         def deliver_pending(queue:, **)
           acquired = @mutex.synchronize do
             next false if queue.draining || queue.pending.empty? || queue.subscribers.empty?
@@ -155,11 +178,15 @@ module Legion
               subscription = queue.subscribers.shift
               queue.subscribers << subscription
               subscription.running_thread = Thread.current
-              [subscription, subscription.callback, queue.pending.shift]
+              message = queue.pending.shift.dup
+              message.delivery_tag = (@next_delivery_tag += 1)
+              message.requeued = false
+              queue.unacked[message.delivery_tag] = [subscription, message] if subscription.manual_ack
+              [subscription, subscription.callback, message]
             end
             break unless delivery
 
-            deliver(queue: queue, subscription: delivery[0], callback: delivery[1], message: delivery[2])
+            break unless deliver(queue: queue, subscription: delivery[0], callback: delivery[1], message: delivery[2])
           end
         ensure
           @mutex.synchronize { queue.draining = nil if queue.draining.equal?(Thread.current) } if acquired
@@ -183,7 +210,7 @@ module Legion
 
         def new_queue(name:, implicit: false, exchange_name: nil, **)
           key = implicit ? [true, exchange_name, name] : [false, name]
-          QueueState.new(name: name, key: key, pending: [], subscribers: [], owners: [], bindings: [],
+          QueueState.new(name: name, key: key, pending: [], unacked: {}, subscribers: [], owners: [], bindings: [],
                          implicit: implicit, exchange_name: exchange_name)
         end
 
@@ -199,7 +226,6 @@ module Legion
 
         def unregister(subscription:, **)
           subscription.callback = nil
-          subscription.owner = nil
           subscription.queue.subscribers.delete(subscription)
         end
 
@@ -211,14 +237,17 @@ module Legion
           subscriptions.each do |subscription|
             unregister(subscription: subscription)
             await_completion(subscription: subscription)
+            requeue_unacked(subscription: subscription)
           end
         end
 
         def deliver(queue:, subscription:, callback:, message:, **)
           callback.call(message)
+          !message.requeued
         rescue StandardError
           @mutex.synchronize do
-            queue.pending.unshift(message) if @queues[queue.key].equal?(queue)
+            outstanding = queue.unacked.delete(message.delivery_tag)
+            requeue_message(queue: queue, message: message) if !subscription.manual_ack || outstanding
           end
           raise
         ensure
@@ -226,6 +255,23 @@ module Legion
             subscription.running_thread = nil
             subscription.completed.broadcast
           end
+        end
+
+        def requeue_unacked(subscription:, **)
+          queue = subscription.queue
+          entries = queue.unacked.select { |_tag, (subscriber, _message)| subscriber.equal?(subscription) }
+          entries.reverse_each do |tag, (_subscriber, message)|
+            queue.unacked.delete(tag)
+            requeue_message(queue: queue, message: message)
+          end
+        end
+
+        def requeue_message(queue:, message:, **)
+          return unless @queues[queue.key].equal?(queue)
+
+          message.redelivered = true
+          message.requeued = true
+          queue.pending.unshift(message)
         end
 
         def routes?(queue:, exchange_name:, routing_key:, exchange_type:, **)

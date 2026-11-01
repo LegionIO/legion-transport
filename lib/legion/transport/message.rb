@@ -1,15 +1,18 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require_relative 'settings'
+require_relative 'task_protocol'
 require_relative 'publisher'
 require_relative 'tenant_quota'
+require_relative 'task_envelope'
 
 module Legion
   module Transport
     class Message
       include Legion::Transport::Common
-
-      LEGION_PROTOCOL_VERSION = '2.0'
+      include Legion::Transport::Settings::Helper
+      include Legion::Transport::TaskProtocol::Helper
 
       class << self
         include Legion::Logging::Helper
@@ -22,9 +25,6 @@ module Legion
 
       def self.max_payload_bytes
         Legion::Settings[:transport][:max_payload_bytes]
-      rescue StandardError => e
-        handle_exception(e, level: :warn, handled: true, operation: 'transport.message.max_payload_bytes')
-        1_048_576
       end
 
       def publish(options = nil)
@@ -45,7 +45,7 @@ module Legion
         result = Legion::Transport::Publisher.publish(
           exchange: destination, payload: payload, envelope: envelope,
           publisher_confirm: @options[:publisher_confirm] == true, mandatory: @options[:mandatory] == true,
-          confirm_timeout_ms: @options.fetch(:publish_confirm_timeout_ms, 5000)
+          confirm_timeout_ms: @options.fetch(:publish_confirm_timeout_ms) { transport_task_publication_settings.fetch(:publish_confirm_timeout_ms) }
         )
         if result[:status] == :failed
           return spool_publish_result(result: result, payload: payload, envelope: envelope, declaration: declaration, tenant_id: tenant_id)
@@ -63,6 +63,15 @@ module Legion
         spool_publish_result(result: result, payload: payload, envelope: envelope, declaration: declaration, tenant_id: tenant_id)
       ensure
         @options = original_options if original_options
+      end
+
+      def publish!(**options)
+        policy = transport_task_publication_settings.merge(@options.slice(*PUBLISH_OPTION_KEYS)).merge(options)
+        result = publish(policy.merge(return_result: true))
+        return result if result.is_a?(Hash) && result[:accepted] == true && result[:status] == :accepted
+
+        result = { accepted: false, status: :failed, error: 'Publisher did not return an accepted result' } unless result.is_a?(Hash)
+        raise Legion::Transport::PublishRejected.new(result: result)
       end
 
       def publish_exchange_name
@@ -110,7 +119,7 @@ module Legion
       end
 
       def app_id
-        @options[:app_id] || 'legion'
+        @options[:app_id] || Legion::Settings[:transport][:messages][:app_id]
       end
 
       def message_id
@@ -119,7 +128,7 @@ module Legion
 
       # user_id Sender's identifier. https://www.rabbitmq.com/extensions.html#validated-user-id
       def user_id
-        @options[:user_id] || Legion::Transport.settings[:connection][:user]
+        @options[:user_id] || Legion::Settings[:transport][:connection][:user]
       end
 
       def reply_to
@@ -133,7 +142,7 @@ module Legion
       end
 
       def persistent
-        @options.fetch(:persistent) { Legion::Transport.settings[:messages][:persistent] }
+        @options.fetch(:persistent) { Legion::Settings[:transport][:messages][:persistent] }
       end
 
       def expiration
@@ -141,10 +150,10 @@ module Legion
           @options[:expiration]
         elsif @options.key? :ttl
           @options[:ttl]
-        elsif Legion::Transport.settings[:messages].key? :expiration
-          Legion::Transport.settings[:messages][:expiration]
-        elsif Legion::Transport.settings[:messages].key? :ttl
-          Legion::Transport.settings[:messages][:ttl]
+        elsif Legion::Settings[:transport][:messages].key? :expiration
+          Legion::Settings[:transport][:messages][:expiration]
+        elsif Legion::Settings[:transport][:messages].key? :ttl
+          Legion::Settings[:transport][:messages][:ttl]
         end
       end
 
@@ -188,7 +197,7 @@ module Legion
           raise Legion::Transport::EncryptionNotReady, 'Message encryption requires a ready cluster secret'
         end
 
-        timeout = Legion::Settings.dig(:crypt, :cluster_secret_timeout) || 5
+        timeout = Legion::Settings.dig(:crypt, :cluster_secret_timeout) || Legion::Settings[:transport][:messages][:encryption_timeout_seconds]
         unless timeout.is_a?(Numeric) && timeout.finite? && timeout.positive?
           raise Legion::Transport::EncryptionNotReady, 'Cluster secret readiness timeout must be finite and positive'
         end
@@ -211,7 +220,7 @@ module Legion
 
       def headers
         @options[:headers] ||= Concurrent::Hash.new
-        @options[:headers]['legion_protocol_version'] ||= LEGION_PROTOCOL_VERSION
+        @options[:headers]['legion_protocol_version'] ||= Legion::Settings[:transport][:messages][:protocol_version]
         inject_legion_version_header
         inject_region_header
         inject_legion_region_header
@@ -235,7 +244,7 @@ module Legion
       end
 
       def priority
-        @options[:priority] || Legion::Transport.settings[:messages][:priority] || 0
+        @options[:priority] || Legion::Settings[:transport][:messages][:priority]
       end
 
       def content_type
@@ -247,7 +256,7 @@ module Legion
       end
 
       def type
-        'task'
+        Legion::Transport::TaskProtocol::MESSAGE_TYPES.fetch(:task)
       end
 
       def timestamp
@@ -278,6 +287,10 @@ module Legion
 
       def validate_payload_size(payload:, **)
         limit = self.class.max_payload_bytes
+        unless limit.is_a?(Integer) && limit.positive?
+          raise Legion::Transport::Settings::ConfigurationError, 'transport.max_payload_bytes must be a positive Integer'
+        end
+
         size = payload.bytesize
         return if size <= limit
 
@@ -328,7 +341,7 @@ module Legion
         return if region.nil?
 
         @options[:headers]['x-legion-region'] = region
-        affinity = @options[:region_affinity] || 'prefer_local'
+        affinity = @options[:region_affinity] || Legion::Settings[:transport][:messages][:region_affinity]
         @options[:headers]['x-legion-region-affinity'] = affinity
       end
 
@@ -336,8 +349,8 @@ module Legion
         return unless defined?(Legion::Region) &&
                       Legion::Region.respond_to?(:current)
 
-        default_affinity = (defined?(Legion::Settings) && Legion::Settings.dig(:region, :default_affinity)) || 'prefer_local'
-        explicit_region = defined?(Legion::Settings) ? Legion::Settings.dig(:region, :current) : nil
+        default_affinity = Legion::Settings.dig(:region, :default_affinity) || Legion::Settings[:transport][:messages][:region_affinity]
+        explicit_region = Legion::Settings.dig(:region, :current)
         return if explicit_region.nil? && default_affinity == 'any'
 
         current_region = Legion::Region.current

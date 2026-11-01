@@ -50,7 +50,7 @@ RSpec.describe Legion::Transport::InProcess do
     local_queue = described_class::Queue.new(local_channel, 'contract.queue')
     local_queue.bind(local_exchange, routing_key: 'work')
     received = []
-    local_queue.subscribe { |_info, _properties, payload| received << payload }
+    local_queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     expect(local_exchange.publish('accepted', routing_key: 'work')).to include(routed: true)
     expect(received).to eq(['accepted'])
@@ -60,7 +60,7 @@ RSpec.describe Legion::Transport::InProcess do
     other = described_class::Exchange.new(channel, 'topic', 'other')
     queue.bind(exchange, routing_key: 'work')
     received = []
-    queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     expect(other.publish('wrong', routing_key: 'work')).to include(routed: false)
     expect(exchange.publish('right', routing_key: 'work')).to include(routed: true)
@@ -73,7 +73,7 @@ RSpec.describe Legion::Transport::InProcess do
     expect(exchange.publish('unroutable', routing_key: 'work')).to include(routed: false)
     queue.bind(exchange, routing_key: 'work')
     received = []
-    queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     expect(received).to be_empty
     expect(default_deliveries).to be_empty
@@ -86,7 +86,7 @@ RSpec.describe Legion::Transport::InProcess do
     queue.bind(other, routing_key: 'work')
     queue.unbind(exchange, { routing_key: 'work' })
     received = []
-    queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     expect(exchange.publish('wrong', routing_key: 'work')).to include(routed: false)
     other.publish('right', routing_key: 'work')
@@ -107,7 +107,7 @@ RSpec.describe Legion::Transport::InProcess do
     it "matches AMQP topic words for #{pattern.inspect}" do
       queue.bind(exchange, routing_key: pattern)
       received = []
-      queue.subscribe { |info, _properties, payload| received << [info.routing_key, payload] }
+      queue.subscribe(manual_ack: false) { |info, _properties, payload| received << [info.routing_key, payload] }
       cases[:matches].each do |key|
         expect(exchange.publish(key, routing_key: key)).to include(routed: true)
       end
@@ -123,7 +123,7 @@ RSpec.describe Legion::Transport::InProcess do
     direct = described_class::Exchange.new(channel, 'direct', 'direct')
     queue.bind(direct, routing_key: 'work.*')
     received = []
-    queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     expect(direct.publish('wrong', routing_key: 'work.run')).to include(routed: false)
     direct.publish('literal', routing_key: 'work.*')
@@ -135,7 +135,7 @@ RSpec.describe Legion::Transport::InProcess do
     other = described_class::Exchange.new(channel, 'fanout', 'other')
     queue.bind(fanout, routing_key: 'ignored')
     received = []
-    queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     fanout.publish('routed', routing_key: 'anything')
     expect(other.publish('wrong', routing_key: 'anything')).to include(routed: false)
@@ -144,7 +144,7 @@ RSpec.describe Legion::Transport::InProcess do
 
   it 'binds unbound queues only through the default exchange' do
     received = []
-    queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     expect(exchange.publish('wrong', routing_key: queue.name)).to include(routed: false)
     expect(channel.default_exchange.publish('right', routing_key: queue.name)).to include(routed: true)
@@ -154,7 +154,7 @@ RSpec.describe Legion::Transport::InProcess do
   it 'delivers once per queue even when several bindings match' do
     queue.bind(exchange, routing_key: '#').bind(exchange, routing_key: 'work.*').bind(exchange, routing_key: '#')
     received = []
-    queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
     exchange.publish('once', routing_key: 'work.run')
 
     expect(received).to eq(['once'])
@@ -163,7 +163,7 @@ RSpec.describe Legion::Transport::InProcess do
   it 'preserves the actual exchange, routing key, and full encrypted publication envelope' do
     queue.bind(exchange, routing_key: 'work.#')
     deliveries = []
-    queue.subscribe { |info, properties, payload| deliveries << [info, properties, payload] }
+    queue.subscribe(manual_ack: false) { |info, properties, payload| deliveries << [info, properties, payload] }
     envelope = {
       content_type: 'application/octet-stream', content_encoding: 'aes-256-gcm',
       headers: { 'iv' => 'base64-iv', 'auth_tag' => 'base64-tag', 'tenant_id' => 'alpha' },
@@ -187,9 +187,9 @@ RSpec.describe Legion::Transport::InProcess do
     exchange.publish('backlog', routing_key: 'work')
     first = []
     second = []
-    queue.subscribe { |_info, _properties, payload| first << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| first << payload }
     exchange.publish('live', routing_key: 'work')
-    queue.subscribe { |_info, _properties, payload| second << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| second << payload }
     expect(second).to be_empty
     exchange.publish('next', routing_key: 'work')
     exchange.publish('last', routing_key: 'work')
@@ -202,14 +202,14 @@ RSpec.describe Legion::Transport::InProcess do
     queue.bind(exchange, routing_key: 'work')
     cancelled_deliveries = []
     5.times do
-      consumer = queue.subscribe { |_info, _properties, payload| cancelled_deliveries << payload }
+      consumer = queue.subscribe(manual_ack: false) { |_info, _properties, payload| cancelled_deliveries << payload }
       consumer.cancel
       consumer.cancel
       expect(consumer.cancelled?).to be true
     end
     exchange.publish('pending', routing_key: 'work')
     replacement = []
-    queue.subscribe { |_info, _properties, payload| replacement << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| replacement << payload }
 
     expect(cancelled_deliveries).to be_empty
     expect(replacement).to eq(['pending'])
@@ -227,7 +227,7 @@ RSpec.describe Legion::Transport::InProcess do
   it 'allows a callback to cancel itself without deadlocking or receiving queued messages' do
     queue.bind(exchange, routing_key: 'work')
     received = []
-    consumer = queue.subscribe do |_info, _properties, payload|
+    consumer = queue.subscribe(manual_ack: false) do |_info, _properties, payload|
       received << payload
       consumer.cancel
       exchange.publish('pending', routing_key: 'work')
@@ -244,7 +244,7 @@ RSpec.describe Legion::Transport::InProcess do
     release = Thread::Queue.new
     cancelled = Thread::Queue.new
     received = []
-    consumer = queue.subscribe do |_info, _properties, payload|
+    consumer = queue.subscribe(manual_ack: false) do |_info, _properties, payload|
       received << payload
       entered << :entered
       release.pop
@@ -261,7 +261,7 @@ RSpec.describe Legion::Transport::InProcess do
     independent = start_worker do
       other_queue = described_class::Queue.new(channel, 'other')
       other_queue.bind(exchange, routing_key: 'other')
-      other_queue.subscribe { |_info, _properties, payload| cancelled << payload }
+      other_queue.subscribe(manual_ack: false) { |_info, _properties, payload| cancelled << payload }
       exchange.publish('independent', routing_key: 'other')
       exchange.publish('pending', routing_key: 'work')
     end
@@ -279,21 +279,21 @@ RSpec.describe Legion::Transport::InProcess do
   it 'queue deletion cancels all consumers and removes bindings and pending work' do
     queue.bind(exchange, routing_key: '#')
     received = []
-    consumer = queue.subscribe { |_info, _properties, payload| received << payload }
+    consumer = queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
     queue.delete
 
     expect(consumer.cancelled?).to be true
     expect(exchange.publish('unroutable', routing_key: 'work')).to include(routed: false)
     expect(received).to be_empty
     replacement = described_class::Queue.new(channel, queue.name)
-    replacement.subscribe { |_info, _properties, payload| received << payload }
+    replacement.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
     expect(received).to be_empty
   end
 
   it 'exchange deletion removes its bindings without deleting the queue' do
     queue.bind(exchange, routing_key: '#')
     received = []
-    queue.subscribe { |_info, _properties, payload| received << payload }
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
     exchange.delete
 
     expect(exchange.publish('wrong', routing_key: 'work')).to include(routed: false)
@@ -307,13 +307,13 @@ RSpec.describe Legion::Transport::InProcess do
     subscriber_queue = described_class::Queue.new(subscriber_channel, 'owned')
     subscriber_queue.bind('tasks', routing_key: 'work')
     received = []
-    consumer = subscriber_queue.subscribe { |_info, _properties, payload| received << payload }
+    consumer = subscriber_queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
     subscriber_channel.close
     publisher_channel = session.create_channel
     publisher_exchange = publisher_channel.exchange('tasks', type: :topic)
     expect(publisher_exchange.publish('pending', routing_key: 'work')).to include(routed: true)
     replacement = described_class::Queue.new(publisher_channel, 'owned')
-    replacement.subscribe { |_info, _properties, payload| received << payload }
+    replacement.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     expect(consumer.cancelled?).to be true
     expect(received).to eq(['pending'])
@@ -328,9 +328,9 @@ RSpec.describe Legion::Transport::InProcess do
     second_queue = described_class::Queue.new(second_channel, 'second')
     first_queue.bind('tasks', routing_key: 'work')
     second_queue.bind('tasks', routing_key: 'work')
-    first_consumer = first_queue.subscribe { |_info, _properties, _payload| raise 'closed consumer called' }
+    first_consumer = first_queue.subscribe(manual_ack: false) { |_info, _properties, _payload| raise 'closed consumer called' }
     received = []
-    second_queue.subscribe { |_info, _properties, payload| received << payload }
+    second_queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
     first.close
     first.close
     second_channel.exchange('tasks', type: :topic).publish('survives', routing_key: 'work')
@@ -352,8 +352,107 @@ RSpec.describe Legion::Transport::InProcess do
     current = session.create_channel
     current.exchange('tasks.dlx', type: :fanout).publish('failed', routing_key: 'any')
     received = []
-    described_class::Queue.new(current, 'tasks.dlx.queue').subscribe { |_info, _properties, payload| received << payload }
+    described_class::Queue.new(current, 'tasks.dlx.queue').subscribe(manual_ack: false) { |_info, _properties, payload| received << payload }
 
     expect(received).to eq(['failed'])
+  end
+
+  it 'requeues only unacknowledged messages when a manual consumer is cancelled' do
+    queue.bind(exchange, routing_key: 'work')
+    first = []
+    consumer = queue.subscribe do |info, _properties, payload|
+      first << payload
+      queue.acknowledge(info.delivery_tag) if payload == 'acknowledged'
+    end
+    exchange.publish('acknowledged', routing_key: 'work')
+    exchange.publish('unacknowledged', routing_key: 'work')
+    consumer.cancel
+    recovered = []
+    queue.subscribe do |info, _properties, payload|
+      recovered << [payload, info.redelivered]
+      queue.acknowledge(info.delivery_tag)
+    end
+
+    expect(first).to eq(%w[acknowledged unacknowledged])
+    expect(recovered).to eq([['unacknowledged', true]])
+  end
+
+  it 'retains synchronous rejects without a hot redelivery loop and preserves retry metadata' do
+    queue.bind(exchange, routing_key: 'work')
+    attempts = []
+    consumer = queue.subscribe do |info, _properties, payload|
+      attempts << payload
+      queue.reject(info.delivery_tag, requeue: true)
+    end
+    exchange.publish('retry', routing_key: 'work', message_id: 'same-task', headers: { retry_count: 2 })
+    expect(attempts).to eq(['retry'])
+    expect(Legion::Transport::Local.queue_depth(queue.name)).to eq(1)
+    consumer.cancel
+    recovered = []
+    queue.subscribe do |info, properties, payload|
+      recovered << [info.redelivered, properties.message_id, properties.headers, payload]
+      queue.acknowledge(info.delivery_tag)
+    end
+
+    expect(recovered).to eq([[true, 'same-task', { retry_count: 2 }, 'retry']])
+  end
+
+  it 'discards a rejected message when requeue is false' do
+    queue.bind(exchange, routing_key: 'work')
+    consumer = queue.subscribe { |info, _properties, _payload| queue.reject(info.delivery_tag, requeue: false) }
+    exchange.publish('discard', routing_key: 'work')
+    consumer.cancel
+    recovered = []
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| recovered << payload }
+
+    expect(recovered).to be_empty
+    expect(Legion::Transport::Local.queue_depth(queue.name)).to eq(0)
+  end
+
+  it 'refuses acknowledgements from another channel without losing the outstanding delivery' do
+    queue.bind(exchange, routing_key: 'work')
+    tags = []
+    consumer = queue.subscribe { |info, _properties, _payload| tags << info.delivery_tag }
+    exchange.publish('owned', routing_key: 'work')
+    other_channel = described_class::Channel.new
+    expect { other_channel.acknowledge(tags.fetch(0)) }.to raise_error(ArgumentError, /Unknown local delivery tag/)
+    consumer.cancel
+    recovered = []
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| recovered << payload }
+    expect(recovered).to eq(['owned'])
+  ensure
+    other_channel&.close
+  end
+
+  it 'returns unacknowledged work to session-owned queues after a channel closes' do
+    session = start_session
+    subscriber_channel = session.create_channel
+    owned = described_class::Queue.new(subscriber_channel, 'manual.owned')
+    owned.bind('manual', routing_key: 'work')
+    owned.subscribe { |_info, _properties, _payload| nil }
+    publisher = session.create_channel
+    publisher.exchange('manual', type: :topic).publish('interrupted', routing_key: 'work')
+    subscriber_channel.close
+    recovered = []
+    described_class::Queue.new(publisher, 'manual.owned').subscribe do |info, _properties, payload|
+      recovered << [payload, info.redelivered]
+      publisher.acknowledge(info.delivery_tag)
+    end
+
+    expect(recovered).to eq([['interrupted', true]])
+  end
+
+  it 'supports multiple acknowledgements without acknowledging another channel deliveries' do
+    queue.bind(exchange, routing_key: 'work')
+    tags = []
+    consumer = queue.subscribe { |info, _properties, _payload| tags << info.delivery_tag }
+    exchange.publish('first', routing_key: 'work')
+    exchange.publish('second', routing_key: 'work')
+    queue.acknowledge(tags.last, multiple: true)
+    consumer.cancel
+    recovered = []
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| recovered << payload }
+
+    expect(recovered).to be_empty
   end
 end

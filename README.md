@@ -2,7 +2,7 @@
 
 Legion::Transport is the Ruby gem responsible for connecting LegionIO to its FIFO queue system (RabbitMQ over AMQP 0.9.1). It provides thread-safe connection management, exchange/queue abstractions, message publishing with optional encryption, and consumer wrappers.
 
-**Version**: 1.4.31
+**Version**: 1.4.32
 
 ## Features
 
@@ -95,12 +95,52 @@ Options merge with the message's defaults — you can override `routing_key:` or
 
 Mandatory publishing waits for publisher confirmation before reporting routed acceptance. Confirm waits use Bunny's zero-argument API and retire a timed-out channel so late acknowledgments cannot contaminate the next send. A timeout is an unknown delivery outcome, not proof that the broker rejected the message.
 
+#### Task pipeline publication
+
+Task producers and durable outbox relays use `publish!`, not the legacy `publish` return convention:
+
+```ruby
+message = Legion::Transport::Messages::Task.new(
+  function: 'process_order', routing_key: 'orders.process',
+  task_id: 42, parent_id: 7, master_id: 1,
+  principal_id: 'order-service', principal_type: 'service',
+  args: { order_id: 123 }
+)
+
+begin
+  result = message.publish!(spool: false)
+  # result[:accepted] == true and result[:status] == :accepted
+rescue Legion::Transport::PublishRejected => error
+  # error.result has the original :status, :accepted, destination and error details.
+  # Keep/release the outbox intent for retry; do not acknowledge it as delivered.
+end
+```
+
+`Message#publish!(**options)` and `Publisher.publish!(exchange:, payload:, envelope:, **options)` use live, process-local `Legion::Settings[:transport][:task_publication]` through `Legion::Transport::Settings::Helper#transport_task_publication_settings`. Transport registers its defaults at startup with generic `legion-settings >= 1.4.5`; reads never register defaults or cache a loader. Message limits and metadata, connection/TLS configuration, and routing read the live canonical Transport subtree. Defaults enable publisher confirmation, mandatory routing and structured results, use a 5000ms confirmation timeout, and disable the secondary disk spool. Constructor options and call options can explicitly override policy; disabling confirmation or mandatory routing weakens the corresponding guarantee. The bang APIs always return a structured accepted result or raise: spooled, unroutable, nacked, failed and ambiguous timeout outcomes are **not** accepted.
+
+The raw `Publisher.publish!` API is for subscription retries: pass the original bytes and full AMQP envelope, including content encoding, IV, message/correlation IDs, and retry headers. It never re-encodes, re-encrypts or spools the payload. The message API continues using the existing Publisher/Spool implementation; ordinary non-task `publish` behavior is unchanged.
+
+Task, SubTask, Dynamic, CheckSubtask and TaskUpdate preserve canonical task metadata in both the JSON body and AMQP headers: lineage, identity/tenant/worker policy, engine/schema/options, execution attempts/tokens, depth/deadline, schedule/occurrence and definition version. Business arguments stay under `args`; orchestration values such as `results`, `function_args`, `conditions` and `transformation` remain separate. Headers include the fixed `task_protocol_version` (`1`). An empty or missing task routing key is rejected rather than silently sent to the empty route.
+
+`require 'legion/transport/task_protocol'` exposes the immutable wire contract `Legion::Transport::TaskProtocol`: `STATUSES`, `TERMINAL_STATUSES`, `LEGACY_TERMINAL_STATUSES`, `ROUTES`, `MESSAGE_TYPES`, `VERSION` and `METADATA_FIELDS`. Include or extend its `Helper` for `task_status(name:)`, `task_route(name:)` and `task_terminal_status?(status:)`. Status/route lookup rejects unknown names; terminal recognition includes legacy terminal spellings. Stage routes remain `task.subtask.check`, `task.subtask.conditioner`, `task.subtask.transform` and `task.update`. CheckSubtask and TaskUpdate always use these fixed routes; Task and SubTask retain explicit target routing keys. Local settings, including obsolete root `task_execution` overrides, cannot rename wire identities or redefine metadata/version/terminal semantics. Settings is not distributed-consistent storage: publication policy is local, while wire identity is fixed and durable execution authority belongs to the hosting application's database.
+
+Nonblank short templates such as `{}` and structured conditions are routed to their stages rather than bypassed by string-length heuristics. TaskUpdate accepts only canonical statuses. `Messages::Task` needs no database and supports an explicit exchange/routing key; `Messages::Dynamic` resolves its existing `function_id` through the host's optional Data model.
+
+#### Lite-mode delivery limits
+
+With `LEGION_MODE=lite`, strict publication accepts only a matching declared queue when mandatory routing is enabled. Acceptance means **queued in process memory**, not durable broker storage or successful execution. Restart/session shutdown loses pending work; there are no RabbitMQ durability, priority, TTL or dead-letter guarantees.
+
+Manual consumers must acknowledge successful work. `queue.acknowledge(tag)` removes an outstanding delivery; `queue.reject(tag, requeue: true)` retains the original bytes/properties and marks redelivery. Cancellation and channel closure return unacknowledged work to surviving session-owned queues. `requeue: false` discards it. A synchronous rejection is left pending until subsequent queue activity or a replacement subscription, avoiding a tight retry loop. Callback failures propagate and retain pending work; a failing initial backlog subscription is cancelled so replacement consumers can recover it. Direct `Local.subscribe` retains its automatic-acknowledgement API.
+
+Use the Data task/outbox APIs in the hosting application when crash-durable intent is required. Transport does not depend on Data and does not claim lite publication provides that durability.
+
 ### Spooling and automatic replay
 
 Connection failures can persist the already encoded wire payload, complete AMQP envelope, effective broker destination, and tenant identity. `:spooled` means the disk write succeeded; a full spool or failed write returns `:failed`.
 
 - Startup, native recovery, and forced recovery schedule one asynchronous replay worker. Network operations run outside spool-write and connection locks.
 - Replay uses the original ciphertext and IV, checks the stored tenant's encoded-byte quota, and removes records only after routed broker confirmation.
+- Replay restores numeric strings and saved date/time strings to Unix timestamp seconds, preserving timezone offsets. Unparseable timestamp strings are quarantined with their original records instead of blocking later messages.
 - Delivery is **at least once**: interruption after broker acceptance but before confirmation is recorded can cause redelivery. Consumers must tolerate duplicates.
 - Concurrent appends are not part of a drainer's claimed file. Shutdown retains the unconfirmed tail for the next startup.
 - Configure `Legion::Settings[:transport][:spool][:directory]` or pass `directory:` to `Spool.setup`; the default is `~/.legionio/spool`. Capacity limits reject new writes rather than deleting pending messages.
