@@ -522,7 +522,13 @@ module Legion
           end
 
           payload = Base64.strict_decode64(record.fetch(:payload)).force_encoding(record.fetch(:payload_encoding))
-          record.merge(payload: payload)
+          envelope = record[:envelope]
+          timestamp = envelope[:timestamp]
+          if timestamp.is_a?(String)
+            timestamp = timestamp.match?(/\A\d+\z/) ? timestamp.to_i : Time.parse(timestamp).to_i
+            envelope = envelope.merge(timestamp: timestamp)
+          end
+          record.merge(payload: payload, envelope: envelope)
         end
 
         def drain_recovery(&)

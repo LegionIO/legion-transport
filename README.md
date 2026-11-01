@@ -140,6 +140,7 @@ Connection failures can persist the already encoded wire payload, complete AMQP 
 
 - Startup, native recovery, and forced recovery schedule one asynchronous replay worker. Network operations run outside spool-write and connection locks.
 - Replay uses the original ciphertext and IV, checks the stored tenant's encoded-byte quota, and removes records only after routed broker confirmation.
+- Replay restores numeric strings and saved date/time strings to Unix timestamp seconds, preserving timezone offsets. Unparseable timestamp strings are quarantined with their original records instead of blocking later messages.
 - Delivery is **at least once**: interruption after broker acceptance but before confirmation is recorded can cause redelivery. Consumers must tolerate duplicates.
 - Concurrent appends are not part of a drainer's claimed file. Shutdown retains the unconfirmed tail for the next startup.
 - Configure `Legion::Settings[:transport][:spool][:directory]` or pass `directory:` to `Spool.setup`; the default is `~/.legionio/spool`. Capacity limits reject new writes rather than deleting pending messages.

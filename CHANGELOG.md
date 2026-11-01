@@ -15,6 +15,7 @@
 - Declare Base64 as a direct runtime dependency so standalone consumers can load spool support on Ruby 3.4 and newer without incidental dependencies.
 - Read message limits and metadata, connection/TLS policy, Vault configuration and routing directly from live `Legion::Settings[:transport]`; remove cached or forwarding-only settings accessors and optional-dependency fallbacks.
 - Reject missing or invalid payload safety limits with a configuration error before broker publication.
+- Restore persisted date/time and numeric-string AMQP timestamps to Unix seconds before spool replay; preserve ciphertext and IVs, and retain unparseable timestamp records in recovery without blocking healthy messages.
 
 ### Changed
 - Require generic `legion-settings >= 1.4.5`; register Transport defaults at startup, never during policy reads, and document local publication policy versus stable wire identities and lite-mode durability limits.
