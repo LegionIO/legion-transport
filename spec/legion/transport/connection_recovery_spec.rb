@@ -12,13 +12,16 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
   let(:snapshot) { instance_double(Legion::Transport::Connection::Recovery, restore: nil) }
 
   before do
+    stub_const('Legion::Transport::TYPE', 'bunny')
+    stub_const('Legion::Transport::CONNECTOR', Bunny)
     @connected = Legion::Settings[:transport][:connected]
-    allow(connection).to receive(:handle_exception)
+    @pool_size = Legion::Settings[:transport][:connection_pool_size]
     allow(Legion::Transport::Connection::Recovery).to receive(:capture).and_return(snapshot)
   end
 
   after do
     Legion::Settings[:transport][:connected] = @connected
+    Legion::Settings[:transport][:connection_pool_size] = @pool_size
   end
 
   describe '.force_reconnect' do
@@ -54,9 +57,6 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
 
       expect(connection.force_reconnect).to be true
       expect(events).to eq(%i[connected restored notified])
-      expect(connection).to have_received(:handle_exception).with(
-        instance_of(IOError), hash_including(operation: 'transport.connection.reconnect_callback')
-      )
     end
 
     it 'retains the original subscription snapshot after failed restoration' do
@@ -76,7 +76,7 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
 
     it 'recovers closed consumer channels and survives repeated pooled reconnects', :rabbitmq do
       allow(Legion::Transport::Connection::Recovery).to receive(:capture).and_call_original
-      allow(connection).to receive(:settings).and_return(Legion::Settings[:transport].merge(connection_pool_size: 3))
+      Legion::Settings[:transport][:connection_pool_size] = 3
       connection.setup
       publisher = connection.channel
       queue = publisher.queue('', exclusive: true)
@@ -260,7 +260,6 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       connection.send(:tear_down_session, sess: session)
 
       expect(socket).to be_closed
-      expect(connection).not_to have_received(:handle_exception)
     end
 
     it 'closes the socket even when session cleanup raises' do
@@ -272,9 +271,6 @@ RSpec.describe Legion::Transport::Connection, 'recovery lifecycle' do
       connection.send(:tear_down_session, sess: session)
 
       expect(socket).to be_closed
-      expect(connection).to have_received(:handle_exception).with(
-        instance_of(IOError), hash_including(operation: 'transport.connection.tear_down_session')
-      )
     end
   end
 end

@@ -29,19 +29,15 @@ RSpec.describe Legion::Transport do
     end
   end
 
-  it 'has default settings' do
-    expect(described_class.settings).to be_a Hash
-  end
-
   it 'uses transport.log_level for the transport connector logger' do
-    allow(described_class).to receive(:settings).and_return({ log_level: 'info' })
-
-    expect(described_class.logger.level).to eq(Logger::INFO)
+    Legion::Settings.with_overlay(transport: { log_level: 'info' }) do
+      expect(described_class.logger.level).to eq(Logger::INFO)
+    end
   end
 
   it 'supports legacy transport.logger_level for the transport connector logger' do
-    allow(described_class).to receive(:settings).and_return({ logger_level: 'error' })
-
-    expect(described_class.logger.level).to eq(Logger::ERROR)
+    Legion::Settings.with_overlay(transport: { log_level: nil, logger_level: 'error' }) do
+      expect(described_class.logger.level).to eq(Logger::ERROR)
+    end
   end
 end

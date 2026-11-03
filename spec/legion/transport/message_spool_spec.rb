@@ -9,6 +9,14 @@ RSpec.describe Legion::Transport::Message, 'spool fallback' do
   let(:exchange) { instance_double(Bunny::Exchange, name: 'custom.events', type: :topic, channel: channel) }
   let(:message) { described_class.new(routing_key: 'test.run', function: 'test', encrypt: false) }
 
+  around do |example|
+    original = Legion::Settings[:transport]
+    Legion::Settings.loader.settings[:transport] = original.merge(tenant_topology: original.fetch(:tenant_topology).dup)
+    example.run
+  ensure
+    Legion::Settings.loader.settings[:transport] = original
+  end
+
   before do
     Legion::Transport::Spool.reset!
     Legion::Transport::Spool.setup(directory: spool_dir)
@@ -85,7 +93,7 @@ RSpec.describe Legion::Transport::Message, 'spool fallback' do
   it 'records broker exchange names for class-based messages before any connection is available' do
     allow(Legion::Transport::Connection).to receive(:channel).and_raise(IOError, 'offline')
     messages = [
-      Legion::Transport::Messages::Task.new(function: 'run', encrypt: false),
+      Legion::Transport::Messages::Task.new(function: 'run', queue: 'worker', encrypt: false),
       Legion::Transport::Messages::CheckSubtask.new(encrypt: false),
       Legion::Transport::Messages::TaskUpdate.new(task_id: 7, status: 'task.completed', encrypt: false)
     ]
@@ -95,9 +103,7 @@ RSpec.describe Legion::Transport::Message, 'spool fallback' do
   end
 
   it 'preserves an explicit destination without retrying network construction in the failure path' do
-    settings = Legion::Settings[:transport]
-    allow(Legion::Settings).to receive(:[]).and_call_original
-    allow(Legion::Settings).to receive(:[]).with(:transport).and_return(settings.merge(tenant_topology: { enabled: true }))
+    Legion::Settings[:transport][:tenant_topology][:enabled] = true
     expect(Legion::Transport::Connection).to receive(:channel).once.and_raise(IOError, 'offline')
     direct = Legion::Transport::Messages::Direct.new(exchange: 'custom.audit', routing_key: 'audit.created', tenant_id: 'alpha', encrypt: false)
 

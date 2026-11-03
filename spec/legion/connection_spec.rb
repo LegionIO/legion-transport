@@ -122,3 +122,19 @@ RSpec.describe Legion::Transport::Connection, :rabbitmq do
     expect(Legion::Transport::Connection.session_open?).to eq true
   end
 end
+
+RSpec.describe Legion::Transport::Connection, '.settings' do
+  it 'reads replaced canonical channel settings without retaining an old settings snapshot' do
+    original = Legion::Settings[:transport]
+    initial = original.merge(channel: original.fetch(:channel).merge(default_worker_pool_size: 3))
+    Legion::Settings.loader.settings[:transport] = initial
+    expect(described_class.settings.dig(:channel, :default_worker_pool_size)).to eq(3)
+
+    Legion::Settings.loader.settings[:transport] = initial.merge(
+      channel: initial.fetch(:channel).merge(default_worker_pool_size: 7)
+    )
+    expect(described_class.settings.dig(:channel, :default_worker_pool_size)).to eq(7)
+  ensure
+    Legion::Settings.loader.settings[:transport] = original
+  end
+end

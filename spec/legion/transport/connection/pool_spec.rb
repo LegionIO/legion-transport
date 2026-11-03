@@ -26,10 +26,9 @@ RSpec.describe Legion::Transport::Connection, 'pooled channels' do
 
   before do
     @connected = Legion::Settings[:transport][:connected]
+    @pool_size = Legion::Settings[:transport][:connection_pool_size]
+    Legion::Settings[:transport][:connection_pool_size] = 3
     allow(connection).to receive(:lite_mode?).and_return(false)
-    allow(connection).to receive(:settings).and_return(
-      Legion::Settings[:transport].merge(connection_pool_size: 3)
-    )
     allow(connection).to receive(:create_session_with_failover).and_return(fake_session)
     allow(connection).to receive(:apply_quorum_policy_if_enabled)
     allow(connection).to receive(:handle_exception)
@@ -38,6 +37,7 @@ RSpec.describe Legion::Transport::Connection, 'pooled channels' do
   after do
     connection.shutdown
     Legion::Settings[:transport][:connected] = @connected
+    Legion::Settings[:transport][:connection_pool_size] = @pool_size
   end
 
   it 'reuses an open channel for repeated publishing on one thread' do

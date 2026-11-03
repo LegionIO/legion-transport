@@ -11,7 +11,7 @@ module Legion
         module_function
 
         def declare_all
-          peers = defined?(Legion::Settings) && Legion::Settings.dig(:region, :peers)
+          peers = Legion::Settings[:region][:peers]
           return [] unless peers.is_a?(Array) && !peers.empty?
 
           current = defined?(Legion::Region) ? Legion::Region.current : nil

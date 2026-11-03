@@ -45,8 +45,10 @@ RSpec.describe Legion::Transport::Spool, 'confirmed broker replay', rabbitmq: tr
     queue = topology.queue('', exclusive: true)
     queue.bind(exchange, routing_key: 'run')
     wire_payload = 'gcm:ciphertext:tag'
+    timestamp = '2026-07-22 22:34:26 -0500'
+    expected_timestamp = Time.new(2026, 7, 22, 22, 34, 26, '-05:00').to_i
     described_class.write(exchange: exchange.name, exchange_type: :topic, tenant_id: 'default', routing_key: 'run',
-                          payload: wire_payload, content_encoding: 'encrypted/cs', headers: { iv: 'original-iv' })
+                          payload: wire_payload, content_encoding: 'encrypted/cs', headers: { iv: 'original-iv' }, timestamp: timestamp)
 
     disconnected = broker_channel
     disconnected.close
@@ -73,6 +75,7 @@ RSpec.describe Legion::Transport::Spool, 'confirmed broker replay', rabbitmq: tr
     expect(payload).to eq(wire_payload)
     expect(properties.content_encoding).to eq('encrypted/cs')
     expect(properties.headers).to include('iv' => 'original-iv')
+    expect(properties.timestamp.to_i).to eq(expected_timestamp)
 
     described_class.stop_replay(deadline: Process.clock_gettime(Process::CLOCK_MONOTONIC) + 0.02)
     finish_broker_replay
@@ -82,7 +85,9 @@ RSpec.describe Legion::Transport::Spool, 'confirmed broker replay', rabbitmq: tr
     finish_broker_replay
     expect(described_class.count).to eq(0)
     # A broker may accept a send whose confirmation the process never observes.
-    expect(queue.pop.last).to eq(wire_payload)
+    _delivery, properties, payload = queue.pop
+    expect(payload).to eq(wire_payload)
+    expect(properties.timestamp.to_i).to eq(expected_timestamp)
   ensure
     release << true if release
   end

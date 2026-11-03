@@ -19,7 +19,7 @@ RSpec.describe Legion::Transport::Messages::Task do
 
     it 'returns transform routing key when transformation string is present' do
       instance = described_class.allocate
-      instance.instance_variable_set(:@options, { conditions: '{}', transformation: '{"key":"val"}' })
+      instance.instance_variable_set(:@options, { conditions: nil, transformation: '{"key":"val"}' })
       expect(instance.routing_key).to eq 'task.subtask.transform'
     end
 

@@ -17,6 +17,7 @@ end
 require 'bundler/setup'
 require 'tmpdir'
 require 'fileutils'
+require 'uri'
 
 require 'legion/settings'
 ENV['LEGION_DNS_BOOTSTRAP'] = 'false'
@@ -27,6 +28,23 @@ RSpec.configure do |config|
   config.before(:suite) do
     @transport_spool_directory = Dir.mktmpdir('legion-transport-spec-spool')
     Legion::Settings[:transport][:spool] = { directory: @transport_spool_directory }
+  end
+
+  config.around(:each, :rabbitmq) do |example|
+    original = Legion::Settings[:transport][:connection]
+    if ENV['RABBITMQ_URL']
+      endpoint = URI.parse(ENV.fetch('RABBITMQ_URL'))
+      port = endpoint.port || original.fetch(:port)
+      connection = original.except(:hosts, :servers, :server).merge(host: endpoint.host, port: port,
+                                                                    resolved_hosts: ["#{endpoint.host}:#{port}"])
+      connection[:user] = URI.decode_www_form_component(endpoint.user) if endpoint.user
+      connection[:password] = URI.decode_www_form_component(endpoint.password) if endpoint.password
+      connection[:vhost] = URI.decode_www_form_component(endpoint.path.delete_prefix('/')) unless endpoint.path.to_s.empty?
+      Legion::Settings[:transport][:connection] = connection
+    end
+    example.run
+  ensure
+    Legion::Settings[:transport][:connection] = original
   end
 
   config.after(:suite) do

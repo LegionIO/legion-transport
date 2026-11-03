@@ -144,8 +144,6 @@ module Legion
       end
 
       def credential_scoping_enabled?
-        return false unless defined?(Legion::Settings)
-
         Legion::Settings.dig(:crypt, :vault, :dynamic_rmq_creds) == true
       end
 

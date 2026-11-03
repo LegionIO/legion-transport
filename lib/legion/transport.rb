@@ -40,10 +40,6 @@ module Legion
         @logger
       end
 
-      def settings
-        Legion::Settings[:transport]
-      end
-
       private
 
       def logger_level_value
@@ -73,7 +69,7 @@ module Legion
       end
 
       def transport_log_level
-        source = settings
+        source = Legion::Settings[:transport]
         return source[:log_level] if source.is_a?(Hash) && source[:log_level]
         return source[:logger_level] if source.is_a?(Hash) && source[:logger_level]
         return source.dig(:logger, :level) if source.is_a?(Hash) && source.dig(:logger, :level)

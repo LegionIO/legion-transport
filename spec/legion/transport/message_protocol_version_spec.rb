@@ -3,6 +3,14 @@
 require 'spec_helper'
 
 RSpec.describe 'Protocol version header' do
+  around do |example|
+    original = Legion::Settings[:transport][:messages][:protocol_version]
+    Legion::Settings[:transport][:messages][:protocol_version] = 'configured-protocol'
+    example.run
+  ensure
+    Legion::Settings[:transport][:messages][:protocol_version] = original
+  end
+
   let(:message_class) do
     Class.new(Legion::Transport::Message) do
       def exchange = nil
@@ -13,9 +21,9 @@ RSpec.describe 'Protocol version header' do
     end
   end
 
-  it 'includes legion_protocol_version in headers' do
+  it 'uses the configured protocol version in outgoing headers' do
     msg = message_class.new(function: 'test')
-    expect(msg.headers).to include('legion_protocol_version' => '2.0')
+    expect(msg.headers).to include('legion_protocol_version' => 'configured-protocol')
   end
 
   it 'includes x-legion-version when Legion::VERSION is loaded' do
@@ -27,7 +35,7 @@ RSpec.describe 'Protocol version header' do
   it 'preserves existing headers alongside protocol version' do
     msg = message_class.new(function: 'test', task_id: 42)
     hdrs = msg.headers
-    expect(hdrs['legion_protocol_version']).to eq('2.0')
+    expect(hdrs['legion_protocol_version']).to eq('configured-protocol')
     expect(hdrs[:task_id]).to eq(42)
   end
 end

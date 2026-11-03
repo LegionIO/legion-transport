@@ -10,7 +10,7 @@ module Legion
       class ChannelAlreadyClosed < StandardError; end
       class ChannelLevelException < StandardError; end
 
-      DeliveryInfo = Struct.new(:delivery_tag, :routing_key, :exchange, keyword_init: true)
+      DeliveryInfo = Struct.new(:delivery_tag, :routing_key, :exchange, :redelivered, keyword_init: true)
 
       class MessageProperties < Hash
         FIELDS = %i[content_type headers timestamp content_encoding delivery_mode priority correlation_id reply_to
@@ -133,9 +133,13 @@ module Legion
           Legion::Transport::Local.bind(queue: queue, exchange_name: exchange_name, routing_key: options.fetch(:routing_key, ''))
         end
 
-        def acknowledge(*); end
+        def acknowledge(delivery_tag, multiple = false, **options) # rubocop:disable Style/OptionalBooleanParameter
+          Legion::Transport::Local.settle(owner: self, delivery_tag: delivery_tag, multiple: options.fetch(:multiple, multiple))
+        end
 
-        def reject(*); end
+        def reject(delivery_tag, requeue = false, **options) # rubocop:disable Style/OptionalBooleanParameter
+          Legion::Transport::Local.settle(owner: self, delivery_tag: delivery_tag, requeue: options.fetch(:requeue, requeue))
+        end
 
         def exchange_delete(name, *)
           Legion::Transport::Local.delete_exchange(name: name)
@@ -199,16 +203,21 @@ module Legion
 
           tag = consumer_tag || SecureRandom.uuid
           consumer = Consumer.new(@channel, self, tag, !manual_ack, false)
-          consumer.register(queue: @local_queue, owner: @channel) do |message|
-            delivery_info = DeliveryInfo.new(delivery_tag: SecureRandom.uuid, routing_key: message.routing_key, exchange: message.exchange)
+          consumer.register(queue: @local_queue, owner: @channel, manual_ack: manual_ack) do |message|
+            delivery_info = DeliveryInfo.new(delivery_tag: message.delivery_tag, routing_key: message.routing_key,
+                                             exchange: message.exchange, redelivered: message.redelivered == true)
             callback.call(delivery_info, MessageProperties.new(**message.properties), message.payload)
           end
           consumer
         end
 
-        def acknowledge(*); end
+        def acknowledge(delivery_tag, multiple = false, **) # rubocop:disable Style/OptionalBooleanParameter
+          @channel.acknowledge(delivery_tag, multiple, **)
+        end
 
-        def reject(*); end
+        def reject(delivery_tag, requeue = false, **) # rubocop:disable Style/OptionalBooleanParameter
+          @channel.reject(delivery_tag, requeue, **)
+        end
 
         def delete(_options = {}, **)
           Legion::Transport::Local.delete_queue(name: @name)
@@ -223,9 +232,12 @@ module Legion
           @cancelled = false
         end
 
-        def register(queue:, owner:, **, &callback)
-          @subscription = Legion::Transport::Local.add_subscription(queue: queue, owner: owner, &callback)
+        def register(queue:, owner:, manual_ack: true, **, &callback)
+          @subscription = Legion::Transport::Local.add_subscription(queue: queue, owner: owner, manual_ack: manual_ack, &callback)
           Legion::Transport::Local.deliver_pending(queue: queue)
+        rescue StandardError
+          cancel
+          raise
         end
 
         def cancel
