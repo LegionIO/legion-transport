@@ -82,7 +82,15 @@ RSpec.describe Legion::Transport::TenantMigration, :rabbitmq do
   end
 
   def migrate(**)
-    described_class.migrate(tenant_id: @tenant, queues: @manifest, **)
+    result = described_class.migrate(tenant_id: @tenant, queues: @manifest, **)
+    # Socket shutdown can return before RabbitMQ removes the connection's exclusive locks.
+    Timeout.timeout(5) do
+      result[:queues].each do |plan|
+        lock_name = "legion.tenant-migration.lock.#{Digest::SHA256.hexdigest(plan[:source])}"
+        sleep 0.01 while @session.queue_exists?(lock_name)
+      end
+    end
+    result
   end
 
   def target_queue(name: target_queue_name)

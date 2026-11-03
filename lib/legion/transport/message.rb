@@ -2,17 +2,17 @@
 
 require 'legion/logging/helper'
 require_relative 'settings'
-require_relative 'task_protocol'
+require_relative 'task/protocol'
 require_relative 'publisher'
 require_relative 'tenant_quota'
-require_relative 'task_envelope'
+require_relative 'task/envelope'
 
 module Legion
   module Transport
     class Message
       include Legion::Transport::Common
       include Legion::Transport::Settings::Helper
-      include Legion::Transport::TaskProtocol::Helper
+      include Legion::Transport::Task::Protocol::Helper
 
       class << self
         include Legion::Logging::Helper
@@ -256,7 +256,7 @@ module Legion
       end
 
       def type
-        Legion::Transport::TaskProtocol::MESSAGE_TYPES.fetch(:task)
+        Legion::Transport::Task::Protocol::MESSAGE_TYPES.fetch(:task)
       end
 
       def timestamp

@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-require 'legion/transport/task_protocol'
+require 'legion/transport/task/protocol'
 
 module Legion
   module Transport
     module Queues
       class TaskUpdate < Legion::Transport::Queue
-        include Legion::Transport::TaskProtocol::Helper
+        include Legion::Transport::Task::Protocol::Helper
 
         def queue_name
           task_route(name: :task_update)

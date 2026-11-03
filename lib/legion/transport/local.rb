@@ -95,6 +95,7 @@ module Legion
             await_completion(subscription: subscription)
             requeue_unacked(subscription: subscription)
           end
+          deliver_pending(queue: subscription.queue)
           true
         end
 
@@ -103,17 +104,25 @@ module Legion
         end
 
         def release_owner(owner:, **)
-          @mutex.synchronize do
+          queues = @mutex.synchronize do
             subscriptions = []
+            affected = []
             @queues.delete_if do |_key, queue|
-              queue.owners.delete(owner)
+              owned = queue.owners.delete(owner)
               removed = !queue.implicit && queue.owners.empty?
-              subscriptions.concat(queue.subscribers.select { |subscriber| removed || subscriber.owner.equal?(owner) })
+              cancelled = queue.subscribers.select { |subscriber| removed || subscriber.owner.equal?(owner) }
+              subscriptions.concat(cancelled)
+              affected << queue if !removed && (owned || !cancelled.empty?)
               queue.pending.clear if removed
               removed
             end
             cancel_subscriptions(subscriptions: subscriptions)
+            affected
           end
+          # Session shutdown drains surviving queues after all its channels close.
+          return true if owner.respond_to?(:connection) && owner.connection && !owner.connection.open?
+
+          queues.each { |queue| deliver_pending(queue: queue) }
           true
         end
 
@@ -243,7 +252,7 @@ module Legion
 
         def deliver(queue:, subscription:, callback:, message:, **)
           callback.call(message)
-          !message.requeued
+          !message.requeued || subscription.callback.nil?
         rescue StandardError
           @mutex.synchronize do
             outstanding = queue.unacked.delete(message.delivery_tag)

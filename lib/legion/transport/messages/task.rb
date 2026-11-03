@@ -4,7 +4,7 @@ module Legion
   module Transport
     module Messages
       class Task < Legion::Transport::Message
-        include Legion::Transport::TaskEnvelope
+        include Legion::Transport::Task::Envelope
 
         def exchange
           if @options.key?(:exchange) && @options[:exchange].is_a?(String)

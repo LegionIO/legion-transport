@@ -21,6 +21,10 @@ module Legion
         include Legion::Transport::Connection::SSL
         include Legion::Transport::Connection::Vault
 
+        def settings
+          Legion::Settings[:transport]
+        end
+
         def lite_mode?
           Legion::Transport::TYPE == 'local'
         end

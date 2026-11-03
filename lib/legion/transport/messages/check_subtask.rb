@@ -6,7 +6,7 @@ module Legion
   module Transport
     module Messages
       class CheckSubtask < Legion::Transport::Message
-        include Legion::Transport::TaskEnvelope
+        include Legion::Transport::Task::Envelope
 
         def exchange
           Legion::Transport::Exchanges::Task

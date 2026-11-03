@@ -13,7 +13,7 @@ module Legion
   module Transport
     module Messages
       class TaskUpdate < Legion::Transport::Message
-        include Legion::Transport::TaskEnvelope
+        include Legion::Transport::Task::Envelope
 
         def routing_key
           task_route(name: :task_update)
@@ -25,7 +25,7 @@ module Legion
 
         def validate
           raise Legion::Exception::InvalidTaskId unless @options[:task_id].is_a?(Integer) && @options[:task_id].positive?
-          raise Legion::Exception::InvalidTaskStatus unless Legion::Transport::TaskProtocol::STATUSES.value?(@options[:status])
+          raise Legion::Exception::InvalidTaskStatus unless Legion::Transport::Task::Protocol::STATUSES.value?(@options[:status])
 
           @valid = true
         end

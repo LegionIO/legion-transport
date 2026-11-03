@@ -357,7 +357,7 @@ RSpec.describe Legion::Transport::InProcess do
     expect(received).to eq(['failed'])
   end
 
-  it 'requeues only unacknowledged messages when a manual consumer is cancelled' do
+  it 'requeues only unacknowledged messages to an existing survivor when a manual consumer is cancelled' do
     queue.bind(exchange, routing_key: 'work')
     first = []
     consumer = queue.subscribe do |info, _properties, payload|
@@ -366,15 +366,33 @@ RSpec.describe Legion::Transport::InProcess do
     end
     exchange.publish('acknowledged', routing_key: 'work')
     exchange.publish('unacknowledged', routing_key: 'work')
-    consumer.cancel
     recovered = []
     queue.subscribe do |info, _properties, payload|
       recovered << [payload, info.redelivered]
       queue.acknowledge(info.delivery_tag)
     end
+    consumer.cancel
 
     expect(first).to eq(%w[acknowledged unacknowledged])
     expect(recovered).to eq([['unacknowledged', true]])
+  end
+
+  it 'hands a self-cancelled manual delivery to an existing survivor after the callback returns' do
+    queue.bind(exchange, routing_key: 'work')
+    received = []
+    consumer = queue.subscribe do |info, _properties, payload|
+      received << [payload, info.redelivered]
+      consumer.cancel
+    end
+    queue.subscribe do |info, _properties, payload|
+      received << [payload, info.redelivered]
+      queue.acknowledge(info.delivery_tag)
+    end
+
+    exchange.publish('handoff', routing_key: 'work')
+
+    expect(received).to eq([['handoff', false], ['handoff', true]])
+    expect(Legion::Transport::Local.queue_depth(queue.name)).to eq(0)
   end
 
   it 'retains synchronous rejects without a hot redelivery loop and preserves retry metadata' do
@@ -424,7 +442,7 @@ RSpec.describe Legion::Transport::InProcess do
     other_channel&.close
   end
 
-  it 'returns unacknowledged work to session-owned queues after a channel closes' do
+  it 'returns unacknowledged work to an existing session-owned consumer after a channel closes' do
     session = start_session
     subscriber_channel = session.create_channel
     owned = described_class::Queue.new(subscriber_channel, 'manual.owned')
@@ -432,14 +450,38 @@ RSpec.describe Legion::Transport::InProcess do
     owned.subscribe { |_info, _properties, _payload| nil }
     publisher = session.create_channel
     publisher.exchange('manual', type: :topic).publish('interrupted', routing_key: 'work')
-    subscriber_channel.close
     recovered = []
     described_class::Queue.new(publisher, 'manual.owned').subscribe do |info, _properties, payload|
       recovered << [payload, info.redelivered]
       publisher.acknowledge(info.delivery_tag)
     end
+    subscriber_channel.close
 
     expect(recovered).to eq([['interrupted', true]])
+  end
+
+  it 'finishes closing a session before redelivering its work to another session' do
+    closing = start_session
+    owner = closing.create_channel
+    standby = closing.create_channel
+    owned = described_class::Queue.new(owner, 'shared.manual')
+    owned.bind('shared', routing_key: 'work')
+    received = []
+    owned.subscribe { |_info, _properties, payload| received << ['owner', payload] }
+    described_class::Queue.new(standby, 'shared.manual').subscribe do |_info, _properties, payload|
+      received << ['closing standby', payload]
+    end
+    survivor = start_session.create_channel
+    described_class::Queue.new(survivor, 'shared.manual').subscribe do |info, _properties, payload|
+      received << ['survivor', payload, info.redelivered]
+      survivor.acknowledge(info.delivery_tag)
+    end
+    owner.exchange('shared', type: :topic).publish('interrupted', routing_key: 'work')
+
+    closing.close
+
+    expect(received).to eq([%w[owner interrupted], ['survivor', 'interrupted', true]])
+    expect(Legion::Transport::Local.queue_depth('shared.manual')).to eq(0)
   end
 
   it 'supports multiple acknowledgements without acknowledging another channel deliveries' do

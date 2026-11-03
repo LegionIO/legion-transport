@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'openssl'
 require 'legion/transport/in_process'
 
 RSpec.describe 'Strict task publication' do
@@ -98,6 +99,41 @@ RSpec.describe 'Strict task publication' do
     expect(envelope).not_to have_key(:mandatory)
   end
 
+  %i[publish publish!].each do |publish_method|
+    it "preserves decryptable task envelopes through #{publish_method}" do
+      crypt = Module.new
+      stub_const('Legion::Crypt', crypt)
+      key = 'k' * 32
+      allow(crypt).to receive(:encrypt) do |plaintext|
+        cipher = OpenSSL::Cipher.new('aes-256-gcm')
+        cipher.encrypt
+        cipher.key = key
+        iv = cipher.random_iv
+        ciphertext = cipher.update(plaintext) + cipher.final
+        { enciphered_message: "gcm:#{Base64.strict_encode64(ciphertext)}:#{Base64.strict_encode64(cipher.auth_tag)}",
+          iv:                 Base64.strict_encode64(iv) }
+      end
+      queue.bind(exchange, routing_key: 'jobs.execute')
+      received = []
+      queue.subscribe(manual_ack: false) do |_info, properties, payload|
+        _prefix, ciphertext, tag = payload.split(':', 3)
+        decipher = OpenSSL::Cipher.new('aes-256-gcm')
+        decipher.decrypt
+        decipher.key = key
+        decipher.iv = Base64.strict_decode64(properties.headers.fetch(:iv))
+        decipher.auth_tag = Base64.strict_decode64(tag)
+        received << Legion::JSON.load(decipher.update(Base64.strict_decode64(ciphertext)) + decipher.final)
+      end
+      encrypted = Legion::Transport::Messages::Task.new(function: 'execute', routing_key: 'jobs.execute',
+                                                        task_id: 9, args: { order_id: 42 }, encrypt: true)
+      allow(encrypted).to receive(:exchange).and_return(exchange)
+
+      Legion::Settings.with_overlay(crypt: { cs_encrypt_ready: true }) { encrypted.public_send(publish_method) }
+
+      expect(received).to eq([{ function: 'execute', task_id: 9, args: { order_id: 42 } }])
+    end
+  end
+
   it 'uses the canonical continuation route despite obsolete settings and an explicit stale route' do
     queue.bind(exchange, routing_key: 'task.subtask.check')
     continuation = Legion::Transport::Messages::CheckSubtask.new(task_id: 9, routing_key: 'obsolete.route', encrypt: false)
@@ -149,6 +185,28 @@ RSpec.describe 'Strict task publication' do
     expect(properties.headers).to include(task_id: 9, parent_id: 4, principal_id: 'caller')
   end
 
+  it 'honors explicit dynamic destinations from constructors and publication overrides' do
+    queue.bind(exchange, routing_key: 'orders.events.processor.execute')
+    queue.bind(exchange, routing_key: 'orders.priority.execute')
+    received = []
+    queue.subscribe(manual_ack: false) { |info, _properties, payload| received << [info.routing_key, Legion::JSON.load(payload).fetch(:args)] }
+    extension = double('extension', values: { name: 'orders', exchange: 'orders.events' })
+    runner = double('runner', extension: extension, values: { name: 'worker', queue: 'processor' })
+    function = double('function', runner: runner, values: { name: 'execute' })
+    dynamic = Legion::Transport::Messages::Dynamic.new(function_id: 7, routing_key: 'orders.events.processor.execute',
+                                                       args: { order_id: 42 }, encrypt: false)
+    allow(dynamic).to receive(:function).and_return(function)
+    allow(dynamic).to receive(:exchange).and_return(exchange)
+
+    dynamic.publish
+    dynamic.publish!(routing_key: 'orders.priority.execute')
+
+    expect(received).to eq([
+                             ['orders.events.processor.execute', { order_id: 42 }],
+                             ['orders.priority.execute', { order_id: 42 }]
+                           ])
+  end
+
   it 'does not bypass a short condition object in favor of a later transformation' do
     queue.bind(exchange, routing_key: 'task.subtask.conditioner')
     stage = Legion::Transport::Messages::Task.new(function: 'execute', conditions: '{}', transformation: '{}', encrypt: false)
@@ -169,6 +227,25 @@ RSpec.describe 'Strict task publication' do
     expect(update.task_terminal_status?(status: 'complete')).to be(true)
     expect(update.task_terminal_status?(status: 'task.running')).to be(false)
     expect { Legion::Transport::Messages::TaskUpdate.new(task_id: 9, status: 'custom.completed') }.to raise_error(Legion::Exception::InvalidTaskStatus)
+  end
+
+  it 'continues publishing previously supported scheduling and transformer exception statuses' do
+    queue.bind(exchange, routing_key: 'task.update')
+    received = []
+    queue.subscribe(manual_ack: false) { |_info, _properties, payload| received << Legion::JSON.load(payload) }
+
+    %w[task.scheduled transformer.exception].each do |status|
+      update = Legion::Transport::Messages::TaskUpdate.new(task_id: 9, status: status, encrypt: false)
+      allow(update).to receive(:exchange).and_return(exchange)
+      update.publish
+    end
+
+    expect(received).to eq([
+                             { task_id: 9, status: 'task.scheduled' },
+                             { task_id: 9, status: 'transformer.exception' }
+                           ])
+    expect(message.task_terminal_status?(status: 'task.scheduled')).to be(false)
+    expect(message.task_terminal_status?(status: 'transformer.exception')).to be(true)
   end
 
   it 'applies live local mandatory policy to message and raw publishing without resetting it' do
