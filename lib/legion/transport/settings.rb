@@ -149,7 +149,7 @@ module Legion
           task_publication:     {
             publisher_confirm: true, mandatory: true, return_result: true, publish_confirm_timeout_ms: 5000, spool: false
           },
-          prefetch:             ENV.fetch('transport.prefetch', '2').to_i,
+          prefetch:             ENV.fetch('transport.prefetch', '1').to_i,
           exchanges:            exchanges,
           queues:               queues,
           connection:           connection,

@@ -296,7 +296,7 @@ Configuration is managed through `legion-settings` with environment variable ove
 | User | `transport.connection.user` | `guest` |
 | Password | `transport.connection.password` | `guest` |
 | VHost | `transport.connection.vhost` | `/` |
-| Prefetch | `transport.prefetch` | `2` |
+| Prefetch | `transport.prefetch` | `1` |
 | Encrypt | `transport.messages.encrypt` | `false` |
 | TTL | `transport.messages.ttl` | `nil` |
 | Persistent | `transport.messages.persistent` | `true` |
@@ -316,7 +316,7 @@ Configuration is managed through `legion-settings` with environment variable ove
     "priority": 0,
     "persistent": true
   },
-  "prefetch": 2,
+  "prefetch": 1,
   "exchanges": {
     "type": "topic",
     "arguments": {},

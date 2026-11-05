@@ -8,7 +8,7 @@ module Legion
       class ChannelPool
         include Legion::Logging::Helper
 
-        def initialize(connection:, size: 10, prefetch: 2)
+        def initialize(connection:, size: 10, prefetch: 1)
           @connection = connection
           @size       = size
           @prefetch   = prefetch

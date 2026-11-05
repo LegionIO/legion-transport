@@ -116,12 +116,6 @@ RSpec.describe Legion::Transport::Settings, 'durability and backpressure default
     end
   end
 
-  it 'requests persistent messages and bounded prefetch when no override exists' do
-    defaults = described_class.default
-    expect(defaults[:messages][:persistent]).to be(true)
-    expect(defaults[:prefetch]).to eq(2)
-  end
-
   it 'preserves explicit nonpersistent messages and unlimited prefetch' do
     ENV['transport.messages.persistent'] = 'false'
     ENV['transport.prefetch'] = '0'

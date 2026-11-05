@@ -23,6 +23,7 @@
 ### Changed
 - Require generic `legion-settings >= 1.4.5`; register Transport defaults at startup, never during policy reads, and document local publication policy versus stable wire identities and lite-mode durability limits.
 - Remove execution attempt IDs and ownership tokens from canonical task metadata. Task persistence uses one ordinary model action per message with prefetch one, without an execution outbox.
+- Default connection and channel-pool prefetch to one while preserving explicit configuration overrides.
 
 ## [1.4.31] - 2026-10-29
 
