@@ -112,7 +112,7 @@ begin
   # result[:accepted] == true and result[:status] == :accepted
 rescue Legion::Transport::PublishRejected => error
   # error.result has the original :status, :accepted, destination and error details.
-  # Keep/release the outbox intent for retry; do not acknowledge it as delivered.
+  # Let the consumer's existing failure handling retry; do not acknowledge failed work.
 end
 ```
 
@@ -120,7 +120,7 @@ end
 
 The raw `Publisher.publish!` API is for subscription retries: pass the original bytes and full AMQP envelope, including content encoding, IV, message/correlation IDs, and retry headers. It never re-encodes, re-encrypts or spools the payload. The message API continues using the existing Publisher/Spool implementation. Both message publication APIs preserve task encryption IVs; legacy `publish` retains its existing return convention.
 
-Task, SubTask, Dynamic, CheckSubtask and TaskUpdate preserve canonical task metadata in both the JSON body and AMQP headers: lineage, identity/tenant/worker policy, engine/schema/options, execution attempts/tokens, depth/deadline, schedule/occurrence and definition version. Explicit business arguments stay under `args`, separate from orchestration values such as `results`, `function_args`, `conditions` and `transformation`. Dynamic retains its legacy flat-argument fallback; supply `args:` to prevent that fallback from passing orchestration values to the runner. Headers include the fixed `task_protocol_version` (`1`). An empty or missing task routing key is rejected rather than silently sent to the empty route.
+Task, SubTask, Dynamic, CheckSubtask and TaskUpdate preserve canonical task metadata in both the JSON body and AMQP headers: lineage, identity/tenant/worker policy, engine/schema/options, depth/deadline, schedule/occurrence and definition version. Execution attempts and ownership tokens are not part of the task envelope. Explicit business arguments stay under `args`, separate from orchestration values such as `results`, `function_args`, `conditions` and `transformation`. Dynamic retains its legacy flat-argument fallback; supply `args:` to prevent that fallback from passing orchestration values to the runner. Headers include the fixed `task_protocol_version` (`1`). An empty or missing task routing key is rejected rather than silently sent to the empty route.
 
 `require 'legion/transport/task/protocol'` exposes the immutable wire contract `Legion::Transport::Task::Protocol`: `STATUSES`, `TERMINAL_STATUSES`, `LEGACY_TERMINAL_STATUSES`, `ROUTES`, `MESSAGE_TYPES`, `VERSION` and `METADATA_FIELDS`. Include or extend its `Helper` for `task_status(name:)`, `task_route(name:)` and `task_terminal_status?(status:)`. Status/route lookup rejects unknown names; terminal recognition includes legacy terminal spellings. Shared task-envelope behavior lives in `legion/transport/task/envelope` under `Legion::Transport::Task::Envelope`.
 
@@ -134,7 +134,7 @@ With `LEGION_MODE=lite`, strict publication accepts only a matching declared que
 
 Manual consumers must acknowledge successful work. `queue.acknowledge(tag)` removes an outstanding delivery; `queue.reject(tag, requeue: true)` retains the original bytes/properties and marks redelivery. Cancellation and channel closure return unacknowledged work to surviving session-owned queues and resume already-subscribed consumers without waiting for another publication. Session shutdown closes its consumers before handing shared work to surviving sessions. `requeue: false` discards it. A synchronous rejection is left pending until subsequent queue activity or a replacement subscription, avoiding a tight retry loop. Callback failures propagate and retain pending work; a failing initial backlog subscription is cancelled so replacement consumers can recover it. Direct `Local.subscribe` retains its automatic-acknowledgement API.
 
-Use the Data task/outbox APIs in the hosting application when crash-durable intent is required. Transport does not depend on Data and does not claim lite publication provides that durability.
+Task persistence assumes prefetch one: each persistence message performs one ordinary model insert or update, then the consumer acknowledges successful work. Transport does not depend on Data; lite publication does not provide crash durability.
 
 ### Spooling and automatic replay
 

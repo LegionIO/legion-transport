@@ -5,8 +5,8 @@
 ## [1.4.32] - 2026-10-30
 
 ### Added
-- Add strict `Message#publish!` and raw `Publisher.publish!` APIs backed by Transport-owned local `transport.task_publication` policy; return explicit accepted results or raise `PublishRejected` exposing the original result. Keep legacy non-task publication behavior unchanged and disable duplicate spooling for task outbox handoffs by default.
-- Preserve canonical task lineage, policy identity, typed engine/schema context, attempts, deadlines and schedule metadata across task subclasses and raw-byte retries.
+- Add strict `Message#publish!` and raw `Publisher.publish!` APIs backed by Transport-owned local `transport.task_publication` policy; return explicit accepted results or raise `PublishRejected` exposing the original result. Keep legacy non-task publication behavior unchanged and disable secondary spooling for strict task publication by default.
+- Preserve canonical task lineage, policy identity, typed engine/schema context, deadlines and schedule metadata across task subclasses and raw-byte retries.
 - Own the immutable task wire contract in `Legion::Transport::Task::Protocol`, with status/route lookup and terminal recognition helpers independent of runtime settings, Data and Core. Nest task protocol and envelope implementations under `lib/legion/transport/task/`.
 
 ### Fixed
@@ -22,6 +22,7 @@
 
 ### Changed
 - Require generic `legion-settings >= 1.4.5`; register Transport defaults at startup, never during policy reads, and document local publication policy versus stable wire identities and lite-mode durability limits.
+- Remove execution attempt IDs and ownership tokens from canonical task metadata. Task persistence uses one ordinary model action per message with prefetch one, without an execution outbox.
 
 ## [1.4.31] - 2026-10-29
 

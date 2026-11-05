@@ -89,7 +89,7 @@ RSpec.describe 'Strict task publication' do
     bytes = "\x00\xFFencrypted".b
     envelope = {
       routing_key: 'jobs.execute', message_id: 'logical-task', correlation_id: 'chain', content_type: 'application/json',
-      content_encoding: 'encrypted/cs', headers: { iv: 'unchanged-iv', retry_count: 2, principal_id: 'caller', execution_token: 'claim' }
+      content_encoding: 'encrypted/cs', headers: { iv: 'unchanged-iv', retry_count: 2, principal_id: 'caller' }
     }
 
     result = Legion::Transport::Publisher.publish!(exchange: exchange, payload: bytes, envelope: envelope)
@@ -151,7 +151,7 @@ RSpec.describe 'Strict task publication' do
       runner_class: 'Worker', runner_routing_key: 'worker', trigger_runner_id: 2, trigger_function_id: 4, debug: false,
       engine: 'json', schema: { type: 'object', required: ['order_id'] }, engine_options: { strict: true },
       principal_id: 'principal', principal_type: 'service', tenant_id: 'tenant', worker_id: 'worker-id', source: 'scheduler',
-      message_id: 'message', correlation_id: 'correlation', attempt_id: 12, execution_token: 'token', depth: 0,
+      message_id: 'message', correlation_id: 'correlation', depth: 0,
       deadline_at: '2026-11-01T00:00:00Z', schedule_id: 5, occurrence_id: 'occurrence', definition_version: 2
     }
     subtask = Legion::Transport::Messages::SubTask.new(**metadata, transformation: '{}', args: { order_id: 42 }, results: { total: 7 }, encrypt: false)

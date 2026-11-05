@@ -30,8 +30,8 @@ module Legion
         METADATA_FIELDS = %i[
           task_id parent_id master_id chain_id relationship_id function_id function runner_class
           runner_routing_key trigger_function_id trigger_runner_id debug engine schema engine_options
-          principal_id principal_type worker_id tenant_id source correlation_id message_id attempt_id
-          execution_token depth deadline_at schedule_id occurrence_id definition_version
+          principal_id principal_type worker_id tenant_id source correlation_id message_id
+          depth deadline_at schedule_id occurrence_id definition_version
           originating_principal_id originating_principal_type
         ].freeze
 
